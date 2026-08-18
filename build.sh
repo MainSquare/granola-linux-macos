@@ -7,13 +7,8 @@ OUTPUT_DIR="$PROJECT_DIR/build/granola"
 CACHE_DIR="$PROJECT_DIR/.cache"
 MACOS_VERSION=""
 DMG_PATH=""
-DOWNLOAD_LATEST=0
 INSTALL_DESKTOP=0
 
-SEVENZIP_VERSION="2501"
-SEVENZIP_ARCHIVE="7z${SEVENZIP_VERSION}-linux-x64.tar.xz"
-SEVENZIP_URL="https://www.7-zip.org/a/$SEVENZIP_ARCHIVE"
-SEVENZIP_SHA256="4ca3b7c6f2f67866b92622818b58233dc70367be2f36b498eb0bdeaaa44b53f4"
 GRANOLA_DOWNLOAD_URL="https://api.granola.ai/v1/download-latest"
 
 usage() {
@@ -21,15 +16,19 @@ usage() {
     "Build Granola's official macOS Electron payload for a Linux runtime while" \
     "exposing a macOS product identity to Granola's renderer and backend." \
     "" \
+    "This build downloads only from reviewed official sources: npm registry" \
+    "tarballs (SRI-locked) plus node-gyp's dependencies via pnpm, and the" \
+    "Electron runtime zip + SHASUMS from github.com/electron releases." \
+    "The DMG and Electron headers must already exist locally; a missing" \
+    "file aborts with the exact URL. 7-Zip (7zz) must be installed." \
+    "" \
     "Usage:" \
     "  ./build.sh [options] /path/to/Granola.dmg" \
-    "  ./build.sh [options] --download-latest" \
     "" \
     "Options:" \
     "  --output DIR                   Build destination (default: build/granola)" \
-    "  --cache-dir DIR                Download cache (default: .cache)" \
+    "  --cache-dir DIR                Local artifact cache (default: .cache)" \
     "  --macos-version VERSION        Identity version (default: installer SDK)" \
-    "  --download-latest              Fetch the current official Granola DMG" \
     "  --install-desktop              Install/update the desktop launcher after building" \
     "  -h, --help                     Show this help"
 }
@@ -37,15 +36,19 @@ usage() {
 # Build Granola's official macOS Electron payload for a Linux runtime while
 # exposing a macOS product identity to Granola's renderer and backend.
 #
+# This build downloads only from reviewed official sources: npm registry
+# tarballs (SRI-locked) plus node-gyp's dependencies via pnpm, and the
+# Electron runtime zip + SHASUMS from github.com/electron releases. The
+# DMG and Electron headers must already exist locally; a missing file
+# aborts with the URL.
+#
 # Usage:
 #   ./build.sh [options] /path/to/Granola.dmg
-#   ./build.sh [options] --download-latest
 #
 # Options:
 #   --output DIR                   Build destination (default: build/granola)
-#   --cache-dir DIR                Download cache (default: .cache)
+#   --cache-dir DIR                Local artifact cache (default: .cache)
 #   --macos-version VERSION        Identity version (default: installer SDK)
-#   --download-latest              Fetch the current official Granola DMG
 #   --install-desktop              Install/update the desktop launcher after building
 #   -h, --help                     Show this help
 
@@ -62,7 +65,17 @@ note() {
   printf '    %s\n' "$*"
 }
 
-download() {
+require_local_file() {
+  local path="$1"
+  local url="$2"
+  [[ -f "$path" ]] || die \
+    "offline build: missing $path - download it yourself (e.g. from $url) and place it there"
+}
+
+# Used only for reviewed official sources: registry.npmjs.org tarballs
+# (verified with locked SRI values) and github.com/electron/electron
+# release assets (verified against Electron's SHASUMS256.txt).
+download_official() {
   local url="$1"
   local destination="$2"
   local partial="${destination}.part"
@@ -97,8 +110,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --download-latest)
-      DOWNLOAD_LATEST=1
-      shift
+      die "downloads are disabled in this build; download the DMG yourself from $GRANOLA_DOWNLOAD_URL and pass its path"
       ;;
     --install-desktop)
       INSTALL_DESKTOP=1
@@ -124,14 +136,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ $# -eq 0 ]] || die "unexpected positional arguments: $*"
-if [[ "$DOWNLOAD_LATEST" -eq 1 && -n "$DMG_PATH" ]]; then
-  die "choose either a DMG path or --download-latest"
-fi
-if [[ "$DOWNLOAD_LATEST" -eq 0 && -z "$DMG_PATH" ]]; then
-  die "supply the official Granola DMG or use --download-latest"
-fi
+[[ -n "$DMG_PATH" ]] \
+  || die "supply the official Granola DMG (download it yourself from $GRANOLA_DOWNLOAD_URL)"
 
-for command_name in curl tar node npm python3 make sha256sum jq realpath file nproc install; do
+for command_name in curl tar node pnpm python3 make sha256sum jq realpath file nproc install; do
   command -v "$command_name" >/dev/null || die "missing prerequisite: $command_name"
 done
 if ! node -e '
@@ -178,11 +186,6 @@ case "$OUTPUT_DIR" in
 esac
 mkdir -p "$CACHE_DIR" "$(dirname "$OUTPUT_DIR")"
 
-if [[ "$DOWNLOAD_LATEST" -eq 1 ]]; then
-  DMG_PATH="$CACHE_DIR/Granola-latest.dmg"
-  step "Downloading the official Granola installer"
-  download "$GRANOLA_DOWNLOAD_URL" "$DMG_PATH"
-fi
 DMG_PATH="$(realpath -m "$DMG_PATH")"
 [[ -f "$DMG_PATH" ]] || die "DMG not found: $DMG_PATH"
 
@@ -198,23 +201,8 @@ trap cleanup EXIT
 
 if [[ -n "${GRANOLA_7ZZ:-}" ]]; then
   SEVENZZ="$GRANOLA_7ZZ"
-elif command -v 7zz >/dev/null; then
-  SEVENZZ="$(command -v 7zz)"
 else
-  SEVENZIP_TARBALL="$CACHE_DIR/$SEVENZIP_ARCHIVE"
-  SEVENZZ="$CACHE_DIR/7zz"
-  if [[ ! -f "$SEVENZIP_TARBALL" ]]; then
-    step "Downloading the pinned 7-Zip extractor"
-    download "$SEVENZIP_URL" "$SEVENZIP_TARBALL"
-  fi
-  actual_7zip_hash="$(sha256sum "$SEVENZIP_TARBALL" | cut -d' ' -f1)"
-  [[ "$actual_7zip_hash" == "$SEVENZIP_SHA256" ]] \
-    || die "7-Zip checksum mismatch"
-  SEVENZIP_EXTRACT_DIR="$WORK_DIR/7zip"
-  mkdir -p "$SEVENZIP_EXTRACT_DIR"
-  tar xf "$SEVENZIP_TARBALL" -C "$SEVENZIP_EXTRACT_DIR" 7zz
-  SEVENZZ="$SEVENZIP_EXTRACT_DIR/7zz"
-  chmod 0755 "$SEVENZZ"
+  SEVENZZ="$(command -v 7zz)" || die "7zz not found; install 7-Zip or set GRANOLA_7ZZ"
 fi
 [[ -x "$SEVENZZ" ]] || die "7zz is not executable: $SEVENZZ"
 
@@ -260,9 +248,9 @@ ELECTRON_SUMS="$CACHE_DIR/electron-v${ELECTRON_VERSION}-SHASUMS256.txt"
 
 step "Preparing the matching official Linux Electron runtime"
 [[ -f "$ELECTRON_SUMS" ]] \
-  || download "$ELECTRON_BASE_URL/SHASUMS256.txt" "$ELECTRON_SUMS"
+  || download_official "$ELECTRON_BASE_URL/SHASUMS256.txt" "$ELECTRON_SUMS"
 [[ -f "$ELECTRON_ZIP" ]] \
-  || download "$ELECTRON_BASE_URL/$ELECTRON_NAME" "$ELECTRON_ZIP"
+  || download_official "$ELECTRON_BASE_URL/$ELECTRON_NAME" "$ELECTRON_ZIP"
 expected_electron_hash="$(awk -v name="$ELECTRON_NAME" '$2 == "*" name {print $1}' "$ELECTRON_SUMS")"
 [[ "$expected_electron_hash" =~ ^[0-9a-f]{64}$ ]] \
   || die "official Electron checksum entry not found for $ELECTRON_NAME"
@@ -317,19 +305,9 @@ SQLITE_INTEGRITY="$(jq -r --arg version "$SQLITE_VERSION" \
 NPM_SOURCE_DIR="$CACHE_DIR/npm-sources"
 mkdir -p "$NPM_SOURCE_DIR"
 SQLITE_TARBALL="$NPM_SOURCE_DIR/better-sqlite3-multiple-ciphers-${SQLITE_VERSION}.tgz"
-if [[ ! -f "$SQLITE_TARBALL" ]]; then
-  PACK_DIR="$WORK_DIR/npm-pack"
-  mkdir -p "$PACK_DIR"
-  PACK_RESULT="$(npm_config_cache="$CACHE_DIR/npm" npm pack \
-    "better-sqlite3-multiple-ciphers@$SQLITE_VERSION" \
-    --ignore-scripts --json --pack-destination "$PACK_DIR")"
-  PACK_INTEGRITY="$(jq -r '.[0].integrity // empty' <<<"$PACK_RESULT")"
-  PACK_FILENAME="$(jq -r '.[0].filename // empty' <<<"$PACK_RESULT")"
-  [[ "$PACK_INTEGRITY" == "$SQLITE_INTEGRITY" ]] \
-    || die "npm returned an unexpected SQLite source integrity value"
-  [[ -f "$PACK_DIR/$PACK_FILENAME" ]] || die "npm source tarball was not created"
-  mv "$PACK_DIR/$PACK_FILENAME" "$SQLITE_TARBALL"
-fi
+[[ -f "$SQLITE_TARBALL" ]] || download_official \
+  "https://registry.npmjs.org/better-sqlite3-multiple-ciphers/-/better-sqlite3-multiple-ciphers-${SQLITE_VERSION}.tgz" \
+  "$SQLITE_TARBALL"
 python3 "$PROJECT_DIR/scripts/verify_sri.py" "$SQLITE_TARBALL" "$SQLITE_INTEGRITY"
 
 STOCK_SOURCE="$WORK_DIR/sqlite-stock"
@@ -344,38 +322,42 @@ NODE_GYP_INTEGRITY="$(jq -r '."node-gyp".integrity // empty' \
   "$PROJECT_DIR/locks/npm-sources.json")"
 [[ -n "$NODE_GYP_INTEGRITY" ]] || die "node-gyp integrity lock is missing"
 NODE_GYP_TARBALL="$NPM_SOURCE_DIR/node-gyp-${NODE_GYP_VERSION}.tgz"
-if [[ ! -f "$NODE_GYP_TARBALL" ]]; then
-  NODE_GYP_PACK_DIR="$WORK_DIR/npm-pack-node-gyp"
-  mkdir -p "$NODE_GYP_PACK_DIR"
-  NODE_GYP_PACK_RESULT="$(npm_config_cache="$CACHE_DIR/npm" npm pack \
-    "node-gyp@$NODE_GYP_VERSION" \
-    --ignore-scripts --json --pack-destination "$NODE_GYP_PACK_DIR")"
-  NODE_GYP_PACK_INTEGRITY="$(jq -r '.[0].integrity // empty' \
-    <<<"$NODE_GYP_PACK_RESULT")"
-  NODE_GYP_PACK_FILENAME="$(jq -r '.[0].filename // empty' \
-    <<<"$NODE_GYP_PACK_RESULT")"
-  [[ "$NODE_GYP_PACK_INTEGRITY" == "$NODE_GYP_INTEGRITY" ]] \
-    || die "npm returned an unexpected node-gyp source integrity value"
-  [[ -f "$NODE_GYP_PACK_DIR/$NODE_GYP_PACK_FILENAME" ]] \
-    || die "node-gyp source tarball was not created"
-  mv "$NODE_GYP_PACK_DIR/$NODE_GYP_PACK_FILENAME" "$NODE_GYP_TARBALL"
-fi
+[[ -f "$NODE_GYP_TARBALL" ]] || download_official \
+  "https://registry.npmjs.org/node-gyp/-/node-gyp-${NODE_GYP_VERSION}.tgz" \
+  "$NODE_GYP_TARBALL"
 python3 "$PROJECT_DIR/scripts/verify_sri.py" \
   "$NODE_GYP_TARBALL" "$NODE_GYP_INTEGRITY"
+
+ELECTRON_HEADERS="$CACHE_DIR/node-v${ELECTRON_VERSION}-headers.tar.gz"
+require_local_file "$ELECTRON_HEADERS" \
+  "https://electronjs.org/headers/v${ELECTRON_VERSION}/node-v${ELECTRON_VERSION}-headers.tar.gz"
+
+# node-gyp only reads the Electron headers' config.gypi (module version,
+# V8 sandbox/pointer-compression defines) with --nodedir or --dist-url,
+# not with --tarball. Unpack the headers and use --nodedir so the native
+# module compiles against Electron's ABI instead of the host Node's.
+ELECTRON_HEADERS_DIR="$CACHE_DIR/electron-headers-${ELECTRON_VERSION}"
+if [[ ! -f "$ELECTRON_HEADERS_DIR/include/node/config.gypi" ]]; then
+  rm -rf "$ELECTRON_HEADERS_DIR"
+  mkdir -p "$ELECTRON_HEADERS_DIR"
+  tar xzf "$ELECTRON_HEADERS" -C "$ELECTRON_HEADERS_DIR" --strip-components=1
+  [[ -f "$ELECTRON_HEADERS_DIR/include/node/config.gypi" ]] \
+    || die "Electron headers tarball has an unexpected layout"
+fi
 
 NATIVE_LOG="$WORK_DIR/native-build.log"
 if ! (
   cd "$SQLITE_MODULE"
   CC="$CC_BIN" CXX="$CXX_BIN" \
-    npm_config_cache="$CACHE_DIR/npm" \
-    npm_config_devdir="$CACHE_DIR/node-gyp" \
+    npm_config_store_dir="$CACHE_DIR/pnpm-store" \
+    npm_config_cache_dir="$CACHE_DIR/pnpm-cache" \
     npm_config_ignore_scripts=true \
-    npm exec --yes --package="$NODE_GYP_TARBALL" -- \
+    pnpm --package="file:$NODE_GYP_TARBALL" dlx \
       node-gyp rebuild --release \
       --runtime=electron \
       --target="$ELECTRON_VERSION" \
       --arch="$ELECTRON_ARCH" \
-      --dist-url=https://electronjs.org/headers \
+      --nodedir="$ELECTRON_HEADERS_DIR" \
       --jobs="$(nproc)"
 ) >"$NATIVE_LOG" 2>&1; then
   tail -n 60 "$NATIVE_LOG" >&2
@@ -447,6 +429,15 @@ if ! mv "$STAGED_OUTPUT" "$OUTPUT_DIR"; then
 fi
 rmdir "$ACTIVATION_DIR"
 ACTIVATION_DIR=""
+
+SANDBOX_HELPER="$OUTPUT_DIR/chrome-sandbox"
+if [[ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null)" == "1" \
+  && "$(stat -c '%u %a' "$SANDBOX_HELPER" 2>/dev/null)" != "0 4755" ]]; then
+  printf '\nThis system restricts unprivileged user namespaces, so Electron needs\n'
+  printf 'the setuid sandbox helper. A rebuild resets it; run after every build:\n'
+  printf '  sudo chown root:root %q\n' "$SANDBOX_HELPER"
+  printf '  sudo chmod 4755 %q\n' "$SANDBOX_HELPER"
+fi
 
 printf '\nBuilt Granola %s for Linux with macOS %s product identity.\n' \
   "$GRANOLA_VERSION" "$MACOS_VERSION"
