@@ -51,6 +51,7 @@ Granola's web app can view and edit notes, but
 - x86-64 Linux. ARM64 is not supported by this release.
 - Your own Granola account and permission to use the downloaded client.
 - Node.js `22.22.2+`, `24.15.0+`, or `26+`, plus npm.
+- 7-Zip's `7zz` binary (or set `GRANOLA_7ZZ`) to extract the DMG.
 - Python 3, curl, jq, tar, xz, make, `file`, and GCC/G++ 11 or newer.
 - `pactl` for automatic Bluetooth headset microphone profile management.
 - Normal Electron runtime libraries for your distribution, including GTK, NSS,
@@ -59,7 +60,7 @@ Granola's web app can view and edit notes, but
 On Pop!_OS/Ubuntu, most build prerequisites can be installed with:
 
 ```bash
-sudo apt install build-essential curl file jq make npm pulseaudio-utils python3 xz-utils
+sudo apt install 7zip build-essential curl file jq make npm pulseaudio-utils python3 xz-utils
 ```
 
 Check `node --version` separately: the distribution's default Node.js may be too
