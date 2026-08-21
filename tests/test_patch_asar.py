@@ -18,8 +18,8 @@ sys.modules[SPEC.name] = PATCH_ASAR
 SPEC.loader.exec_module(PATCH_ASAR)
 
 CAPTURE_ORDER_SOURCE = (
-    b",[p,m]=P(kn)?await Promise.all([f(`system`),f(`microphone`)])"
-    b":[await f(`system`),await f(`microphone`)];"
+    b",[b,x]=P(zee)?await Promise.all([y(`system`),y(`microphone`)])"
+    b":[await y(`system`),await y(`microphone`)];"
 )
 
 
@@ -50,7 +50,7 @@ def make_archive(
         "dist-electron/main/index.js": (
             b"identity=x===`darwin`?`macOS`:x===`win32`?`Windows`:process.platform;"
             b"audio=process.platform===`linux`?`browser`:`native`;"
-            b"async function u(e){e(await M.systemPreferences.askForMediaAccess(`microphone`))};"
+            b"async function u(e){e(await N.systemPreferences.askForMediaAccess(`microphone`))};"
             + (
                 b"handler={audio:{name:`All loopback devices`,id:`loopbackAllDevices`}}"
                 if include_loopback
@@ -61,7 +61,7 @@ def make_archive(
             b"capture=navigator.mediaDevices.getDisplayMedia({audio:{sampleRate:e},video:!1});"
             b"permission=navigator.mediaDevices.getDisplayMedia({audio:!0,video:!1})"
             + CAPTURE_ORDER_SOURCE
-            + b"s.connect(l);let d=!1,f=!1,p=0,m,h=1e3,g=h,_=0,v,y,b=()=>{let e=P(he);"
+            + b"c.connect(l);let u=!1,d=!1,f=0,p,m=1e3,g=m,v=0,y,b,x=()=>{let e=P(See);"
             b"return Number.isFinite(e)?Math.max(0,Math.trunc(e)):0},"
             + primary_suffix
         ),
@@ -110,14 +110,14 @@ class PatchAsarTests(unittest.TestCase):
             self.assertIn(b"async function u(e){e(!0)}", main)
             self.assertEqual(primary.count(b"video:!1"), 2)
             self.assertIn(
-                b"m=await f(`microphone`),p=(await new Promise",
+                b"x=await y(`microphone`),b=(await new Promise",
                 primary,
             )
-            self.assertNotIn(b"m?.stop(),m=p", primary)
-            self.assertNotIn(b"[p,m]=P(kn)?await Promise.all", primary)
-            self.assertIn(b"s.connect(l).connect(t.destination)", primary)
+            self.assertNotIn(b"x?.stop(),x=b", primary)
+            self.assertNotIn(b"[b,x]=P(zee)?await Promise.all", primary)
+            self.assertIn(b"c.connect(l).connect(t.destination)", primary)
             self.assertNotIn(
-                b"s.connect(l);let d=!1,f=!1,p=0,m,h=1e3", primary
+                b"c.connect(l);let u=!1,d=!1,f=0,p,m=1e3", primary
             )
 
             for archive_path in reopened.iter_files():

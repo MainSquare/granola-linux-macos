@@ -238,7 +238,7 @@ def patch_granola(archive: AsarArchive, macos_version: str) -> list[PatchResult]
         ),
         archive.patch_exact(
             main,
-            b"async function u(e){e(await M.systemPreferences.askForMediaAccess(`microphone`))}",
+            b"async function u(e){e(await N.systemPreferences.askForMediaAccess(`microphone`))}",
             b"async function u(e){e(!0)}",
             expected=1,
             label="Linux browser microphone permission bridge",
@@ -288,12 +288,12 @@ def patch_granola(archive: AsarArchive, macos_version: str) -> list[PatchResult]
     # already selected HSP/HFP when the default input is a Bluetooth headset;
     # this ordering also avoids racing PipeWire device discovery at startup.
     capture_order_source = (
-        b",[p,m]=P(kn)?await Promise.all([f(`system`),f(`microphone`)])"
-        b":[await f(`system`),await f(`microphone`)];"
+        b",[b,x]=P(zee)?await Promise.all([y(`system`),y(`microphone`)])"
+        b":[await y(`system`),await y(`microphone`)];"
     )
     capture_order_mic_first = (
-        b",m=await f(`microphone`),p=(await new Promise(e=>setTimeout(e,1500)),"
-        b"await f(`system`));"
+        b",x=await y(`microphone`),b=(await new Promise(e=>setTimeout(e,1500)),"
+        b"await y(`system`));"
     )
     results.append(
         archive.patch_exact(
@@ -312,12 +312,12 @@ def patch_granola(archive: AsarArchive, macos_version: str) -> list[PatchResult]
     # The processor never writes to its output, so connecting it to the
     # destination keeps the graph alive without playing the microphone back.
     worklet_source = (
-        b"s.connect(l);let d=!1,f=!1,p=0,m,h=1e3,g=h,_=0,v,y,b=()=>{let e=P(he);"
+        b"c.connect(l);let u=!1,d=!1,f=0,p,m=1e3,g=m,v=0,y,b,x=()=>{let e=P(See);"
         b"return Number.isFinite(e)?Math.max(0,Math.trunc(e)):0},"
     )
     worklet_keepalive = (
-        b"s.connect(l).connect(t.destination);let d=!1,f=!1,p=0,m,h=1e3,g=h,_=0,"
-        b"v,y,b=()=>Math.max(0,Math.trunc(P(he)||0)),"
+        b"c.connect(l).connect(t.destination);let u=!1,d=!1,f=0,p,m=1e3,g=m,v=0,"
+        b"y,b,x=()=>Math.max(0,Math.trunc(P(See)||0)),"
     )
     results.append(
         archive.patch_exact(
