@@ -43,6 +43,60 @@ output directory. A successful build is copied to a staging directory on the
 destination filesystem before the previous build is moved and the staged build
 is atomically activated.
 
+## Runtime sandbox
+
+`run-granola` starts Electron in a container. The home directory inside is a
+tmpfs with only `~/.config/Granola` mounted through it, the built app is mounted
+read-only at `/opt/granola`, no session D-Bus socket is passed in, and `--rm`
+removes the container when the window closes.
+
+**Chromium's own sandbox is disabled (`--no-sandbox`), deliberately.** This host
+sets `kernel.apparmor_restrict_unprivileged_userns=1`, and a container's payload
+cannot create the nested user namespace Chromium's namespace sandbox needs —
+verified against the default profile and with `seccomp=unconfined`,
+`apparmor=unconfined`, and both. The two working configurations are:
+
+- `--no-sandbox`, keeping Docker's boundary around the host. A renderer
+  compromise reaches the rest of the container — which holds your Granola
+  profile and the Wayland socket — but not the host.
+- `--cap-add SYS_ADMIN` with a setuid `chrome-sandbox`, which restores
+  Chromium's inner sandbox but broadly weakens the container boundary itself.
+
+Keeping the boundary that protects the host is the better trade, so the first is
+the default. `bubblewrap` was evaluated and does not work on this host: an
+unconfined process creating a user namespace transitions into the
+`unprivileged_userns` AppArmor profile and bwrap fails with `setting up uid map:
+Permission denied`. Making it work needs a root policy change.
+
+Be clear-eyed about the boundary. The Wayland socket, the network, and
+optionally the PipeWire and PulseAudio sockets are passed in. This isolates
+Granola from the rest of your home directory and gives you an on/off switch for
+audio; it is not a hard boundary against the application itself.
+
+`GRANOLA_AUDIO=0` passes no audio device into the sandbox at all.
+`GRANOLA_BLUETOOTH_HFP=0`, the default, additionally guarantees that no `pactl`
+call is ever made, so a Bluetooth headset's profile is never touched.
+
+### The `xdg-open` relay
+
+Granola shells out to `xdg-open` for browser sign-in, and the container has no
+usable browser profile. `scripts/sandbox-xdg-open` is mounted over
+`/usr/bin/xdg-open` inside the container and only prints the URL; `run-granola`
+reads that marker on the host side.
+
+**Only `https://` URLs are forwarded to the host's real `xdg-open`.** This is a
+container-to-host channel, and handing the host's `xdg-open` an arbitrary string —
+a `file://` path, a `.desktop` file — is how it would become arbitrary execution
+on the host. Do not relax that filter.
+
+## `granola://` scheme registration
+
+`desktop.sh install` requires an explicit `--scheme-handler` or
+`--no-scheme-handler` (or the corresponding `granola.conf` value) and refuses to
+guess on a non-interactive run. Registering the scheme makes this host answer
+`granola://` URLs from any application that can open a URL; declining means the
+login callback is delivered by hand, once per login.
+
 ## Sensitive local state
 
 Generated builds, downloads, DMGs, ASAR files, compiler logs, and caches are
