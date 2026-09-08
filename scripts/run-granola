@@ -3,7 +3,115 @@ set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GRANOLA_BLUETOOTH_POLL_SECONDS="${GRANOLA_BLUETOOTH_POLL_SECONDS:-2}"
+GRANOLA_IMAGE="${GRANOLA_IMAGE:-granola-linux-macos}"
+GRANOLA_CONTAINER_NAME="${GRANOLA_CONTAINER_NAME:-granola}"
 declare -A GRANOLA_BT_ORIGINAL_PROFILES=()
+
+die() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+# ---------------------------------------------------------------------------
+# Configuration
+#
+# Resolution order per key: environment, then granola.conf, then a prompt when
+# a terminal is attached, then a default. build.sh records the project
+# directory in the build metadata because this script is installed into
+# build/granola, which a rebuild replaces wholesale.
+# ---------------------------------------------------------------------------
+
+GRANOLA_CONFIG_FILE="${GRANOLA_CONFIG_FILE:-}"
+if [[ -z "$GRANOLA_CONFIG_FILE" && -f "$APP_DIR/.granola-linux-macos-build" ]]; then
+  granola_project_dir="$(
+    sed -n 's/^project_dir=//p' "$APP_DIR/.granola-linux-macos-build"
+  )"
+  if [[ -n "$granola_project_dir" && -d "$granola_project_dir" ]]; then
+    GRANOLA_CONFIG_FILE="$granola_project_dir/granola.conf"
+  fi
+fi
+
+# The environment wins over the file, so remember it before sourcing.
+GRANOLA_ENV_AUDIO="${GRANOLA_AUDIO-}"
+GRANOLA_ENV_BLUETOOTH_HFP="${GRANOLA_BLUETOOTH_HFP-}"
+if [[ -n "$GRANOLA_CONFIG_FILE" && -f "$GRANOLA_CONFIG_FILE" ]]; then
+  # shellcheck source=/dev/null
+  source "$GRANOLA_CONFIG_FILE"
+fi
+if [[ -n "$GRANOLA_ENV_AUDIO" ]]; then
+  GRANOLA_AUDIO="$GRANOLA_ENV_AUDIO"
+fi
+if [[ -n "$GRANOLA_ENV_BLUETOOTH_HFP" ]]; then
+  GRANOLA_BLUETOOTH_HFP="$GRANOLA_ENV_BLUETOOTH_HFP"
+fi
+
+granola_remember() {
+  local granola_key="$1" granola_value="$2" granola_dir
+  [[ -n "$GRANOLA_CONFIG_FILE" ]] || return 0
+  granola_dir="$(dirname "$GRANOLA_CONFIG_FILE")"
+  [[ -d "$granola_dir" && -w "$granola_dir" ]] || return 0
+  if [[ -f "$GRANOLA_CONFIG_FILE" ]] \
+    && grep -q "^$granola_key=" "$GRANOLA_CONFIG_FILE"; then
+    sed -i "s|^$granola_key=.*|$granola_key=$granola_value|" \
+      "$GRANOLA_CONFIG_FILE"
+  else
+    printf '%s=%s\n' "$granola_key" "$granola_value" >>"$GRANOLA_CONFIG_FILE"
+  fi
+  printf 'Granola: saved %s=%s in %s\n' \
+    "$granola_key" "$granola_value" "$GRANOLA_CONFIG_FILE" >&2
+}
+
+# Prints 0 or 1 on stdout; everything the user sees goes to stderr so this can
+# be used in a command substitution.
+granola_setting() {
+  local granola_key="$1" granola_default="$2" granola_question="$3"
+  local granola_value="${!granola_key-}" granola_hint granola_reply
+
+  if [[ -z "$granola_value" ]]; then
+    if [[ -t 0 ]]; then
+      if [[ "$granola_default" == 1 ]]; then granola_hint="[Y/n]"
+      else granola_hint="[y/N]"; fi
+      printf '%s %s ' "$granola_question" "$granola_hint" >&2
+      read -r granola_reply || granola_reply=""
+      case "${granola_reply,,}" in
+        y|yes) granola_value=1 ;;
+        n|no) granola_value=0 ;;
+        *) granola_value="$granola_default" ;;
+      esac
+      granola_remember "$granola_key" "$granola_value"
+    else
+      granola_value="$granola_default"
+      printf 'Granola: %s is not configured; using %s.\n' \
+        "$granola_key" "$granola_value" >&2
+    fi
+  fi
+
+  case "$granola_value" in
+    0 | 1) ;;
+    *) die "invalid $granola_key=$granola_value (expected 0 or 1)" ;;
+  esac
+  printf '%s' "$granola_value"
+}
+
+GRANOLA_AUDIO="$(granola_setting GRANOLA_AUDIO 1 \
+  'Give Granola access to your microphone and system audio?')"
+GRANOLA_BLUETOOTH_HFP="$(granola_setting GRANOLA_BLUETOOTH_HFP 0 \
+  'Let Granola switch a Bluetooth headset to the HFP profile while it runs?')"
+
+if [[ "$GRANOLA_AUDIO" == 0 && "$GRANOLA_BLUETOOTH_HFP" == 1 ]]; then
+  printf 'Granola: audio is disabled, so the Bluetooth HFP profile is left alone.\n' >&2
+  GRANOLA_BLUETOOTH_HFP=0
+fi
+
+# ---------------------------------------------------------------------------
+# Bluetooth headset microphone
+#
+# Only ever reached with GRANOLA_BLUETOOTH_HFP=1. Classic Bluetooth exposes a
+# microphone through HSP/HFP, not the A2DP stereo playback profile, and
+# switching profiles after Chromium has begun capture can invalidate Granola's
+# first audio tracks. This runs on the host, outside the sandbox, because the
+# profile belongs to the host's audio server.
+# ---------------------------------------------------------------------------
 
 bluetooth_card_profile() {
   local granola_bt_card="$1"
@@ -81,22 +189,167 @@ restore_bluetooth_profiles() {
   done
 }
 
-trap restore_bluetooth_profiles EXIT
-prepare_bluetooth_microphone
+# ---------------------------------------------------------------------------
+# Sandbox
+#
+# A container, not bwrap. This host sets
+# kernel.apparmor_restrict_unprivileged_userns=1, and an unconfined process
+# that creates a user namespace transitions into the unprivileged_userns
+# profile, whose denied capabilities make bwrap fail with "setting up uid map:
+# Permission denied". Docker's daemon is root, so it never needs an
+# unprivileged user namespace.
+#
+# The same restriction means Chromium cannot build its own namespace sandbox
+# inside the container either, so --no-sandbox is passed deliberately: the
+# boundary being kept is the container's, around the host.
+#
+# The app is bind-mounted read-only rather than baked into an image, so
+# rebuilding the app never means rebuilding an image. Nothing of the home
+# directory is visible except Granola's own profile.
+#
+# Be clear-eyed about what this buys: the Wayland socket still goes in, so this
+# is isolation from the rest of your home directory and an on/off switch for
+# audio, not a hard boundary against the application.
+# ---------------------------------------------------------------------------
 
-"$APP_DIR/electron" \
-  --ozone-platform-hint=auto \
-  --enable-features=WebRTCPipeWireCapturer \
-  "$@" &
+command -v docker >/dev/null 2>&1 \
+  || die "docker is required to run Granola sandboxed"
+docker image inspect "$GRANOLA_IMAGE" >/dev/null 2>&1 \
+  || die "runtime image $GRANOLA_IMAGE is missing; run ./docker-build.sh or: docker build --target runtime -t $GRANOLA_IMAGE ."
+
+GRANOLA_DATA_DIR="$HOME/.config/Granola"
+mkdir -p "$GRANOLA_DATA_DIR"
+
+GRANOLA_UID="$(id -u)"
+GRANOLA_GID="$(id -g)"
+GRANOLA_CONTAINER_HOME="/home/granola"
+GRANOLA_CONTAINER_RUNTIME="/run/user/$GRANOLA_UID"
+
+# No session bus is passed in, so Electron must not stall looking for a Secret
+# Service that is not there. The cost is no tray icon and no notifications.
+GRANOLA_APP_FLAGS=(
+  --ozone-platform-hint=auto
+  --password-store=basic
+  --no-sandbox
+)
+if [[ "$GRANOLA_AUDIO" == 1 ]]; then
+  GRANOLA_APP_FLAGS+=(--enable-features=WebRTCPipeWireCapturer)
+fi
+
+# An already-running instance owns the single-instance lock, so a granola://
+# callback has to reach that process rather than start a second one.
+if [[ $# -gt 0 ]] \
+  && [[ -n "$(docker ps -q -f "name=^${GRANOLA_CONTAINER_NAME}$" 2>/dev/null)" ]]; then
+  exec docker exec "$GRANOLA_CONTAINER_NAME" \
+    /opt/granola/electron "${GRANOLA_APP_FLAGS[@]}" "$@"
+fi
+
+GRANOLA_SANDBOX=(
+  docker run --rm --name "$GRANOLA_CONTAINER_NAME"
+  --user "$GRANOLA_UID:$GRANOLA_GID"
+  --env "HOME=$GRANOLA_CONTAINER_HOME"
+  --env "XDG_RUNTIME_DIR=$GRANOLA_CONTAINER_RUNTIME"
+  --env XDG_SESSION_TYPE=wayland
+  # Ephemeral home, so only the profile below survives and nothing else of the
+  # host home is reachable.
+  --tmpfs "$GRANOLA_CONTAINER_HOME:uid=$GRANOLA_UID,gid=$GRANOLA_GID,mode=0700"
+  --tmpfs "$GRANOLA_CONTAINER_RUNTIME:uid=$GRANOLA_UID,gid=$GRANOLA_GID,mode=0700"
+  --volume "$APP_DIR:/opt/granola:ro"
+  --volume "$GRANOLA_DATA_DIR:$GRANOLA_CONTAINER_HOME/.config/Granola"
+  # Chromium wants more than Docker's default 64 MB of shared memory.
+  --shm-size=1g
+)
+if [[ -x "$APP_DIR/sandbox-xdg-open" ]]; then
+  GRANOLA_SANDBOX+=(
+    --volume "$APP_DIR/sandbox-xdg-open:/usr/bin/xdg-open:ro"
+  )
+fi
+if [[ -d /dev/dri ]]; then
+  GRANOLA_SANDBOX+=(--device /dev/dri)
+  granola_render_gid="$(stat -c %g /dev/dri/renderD128 2>/dev/null || true)"
+  if [[ -n "$granola_render_gid" ]]; then
+    GRANOLA_SANDBOX+=(--group-add "$granola_render_gid")
+  fi
+fi
+if [[ -n "${XDG_RUNTIME_DIR:-}" && -n "${WAYLAND_DISPLAY:-}" \
+  && -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]]; then
+  GRANOLA_SANDBOX+=(
+    --env "WAYLAND_DISPLAY=$WAYLAND_DISPLAY"
+    --volume "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY:$GRANOLA_CONTAINER_RUNTIME/$WAYLAND_DISPLAY"
+  )
+fi
+if [[ "$GRANOLA_AUDIO" == 1 && -n "${XDG_RUNTIME_DIR:-}" ]]; then
+  if [[ -S "$XDG_RUNTIME_DIR/pipewire-0" ]]; then
+    GRANOLA_SANDBOX+=(
+      --volume "$XDG_RUNTIME_DIR/pipewire-0:$GRANOLA_CONTAINER_RUNTIME/pipewire-0"
+    )
+  fi
+  # Deliberately flattened to pulse-native rather than mounted at the host's
+  # pulse/native. Mounting into a subdirectory makes Docker create that
+  # subdirectory as root, and libpulse refuses a runtime directory it does not
+  # own ("XDG_RUNTIME_DIR is not owned by us"), which fails every capture with
+  # "Connection refused". Keeping the socket directly in the uid-owned tmpfs
+  # and naming it through PULSE_SERVER avoids the created-as-root directory.
+  if [[ -S "$XDG_RUNTIME_DIR/pulse/native" ]]; then
+    GRANOLA_SANDBOX+=(
+      --volume "$XDG_RUNTIME_DIR/pulse/native:$GRANOLA_CONTAINER_RUNTIME/pulse-native"
+      --env "PULSE_SERVER=unix:$GRANOLA_CONTAINER_RUNTIME/pulse-native"
+    )
+  fi
+fi
+GRANOLA_SANDBOX+=(${GRANOLA_DOCKER_ARGS:-} "$GRANOLA_IMAGE")
+
+# The container has no browser profile of its own, so sandbox-xdg-open
+# announces OAuth URLs on stdout instead of opening them. Only https:// is
+# handed to the host's real xdg-open: this is a container->host channel, and an
+# arbitrary string here (a file:// path, a .desktop file) is how it becomes
+# arbitrary execution on the host.
+granola_forward_urls() {
+  local granola_line
+  while IFS= read -r granola_line; do
+    case "$granola_line" in
+      "GRANOLA_OPEN_URL https://"*)
+        xdg-open "${granola_line#GRANOLA_OPEN_URL }" >/dev/null 2>&1 || true
+        ;;
+      *)
+        printf '%s\n' "$granola_line"
+        ;;
+    esac
+  done
+}
+
+if [[ "$GRANOLA_BLUETOOTH_HFP" == 1 ]]; then
+  trap restore_bluetooth_profiles EXIT
+  prepare_bluetooth_microphone
+fi
+
+# A named pipe rather than a plain pipe or process substitution: the sandbox
+# has to stay a known background PID so the Bluetooth loop can poll it, and the
+# relay has to be waitable so a crash log is not truncated when we exit.
+GRANOLA_RELAY_PIPE="$(mktemp -u "${TMPDIR:-/tmp}/granola-relay.XXXXXXXX")"
+mkfifo -m 0600 "$GRANOLA_RELAY_PIPE"
+granola_forward_urls <"$GRANOLA_RELAY_PIPE" &
+GRANOLA_RELAY_PID=$!
+# Held open so the relay does not see EOF between writers; unlinked because the
+# open file descriptions are all we still need.
+exec 9>"$GRANOLA_RELAY_PIPE"
+rm -f "$GRANOLA_RELAY_PIPE"
+
+"${GRANOLA_SANDBOX[@]}" /opt/granola/electron "${GRANOLA_APP_FLAGS[@]}" "$@" \
+  >&9 2>&1 &
 GRANOLA_ELECTRON_PID=$!
 
-while kill -0 "$GRANOLA_ELECTRON_PID" 2>/dev/null; do
-  sleep "$GRANOLA_BLUETOOTH_POLL_SECONDS"
-  prepare_bluetooth_microphone
-done
+if [[ "$GRANOLA_BLUETOOTH_HFP" == 1 ]]; then
+  while kill -0 "$GRANOLA_ELECTRON_PID" 2>/dev/null; do
+    sleep "$GRANOLA_BLUETOOTH_POLL_SECONDS"
+    prepare_bluetooth_microphone
+  done
+fi
 
 set +e
 wait "$GRANOLA_ELECTRON_PID"
 GRANOLA_ELECTRON_STATUS=$?
+exec 9>&-
+wait "$GRANOLA_RELAY_PID"
 set -e
 exit "$GRANOLA_ELECTRON_STATUS"

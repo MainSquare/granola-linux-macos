@@ -21,6 +21,36 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterator
 
 
+def match_once(
+    content: bytes,
+    pattern: bytes,
+    label: str,
+    *,
+    patched_pattern: bytes | None = None,
+) -> "re.Match[bytes] | None":
+    """Locate exactly one occurrence of a marker shape, or fail closed.
+
+    Granola's bundler renames module-local identifiers between releases, so
+    markers are matched by shape and the captured names substituted back into
+    the replacement. Requiring exactly one match keeps the guarantee that a
+    changed bundle aborts the build instead of silently patching the wrong
+    site.
+
+    Returns None when the source shape is absent but ``patched_pattern``
+    matches exactly once, meaning this bundle has already been patched.
+    """
+    matches = list(re.finditer(pattern, content, re.S))
+    if len(matches) == 1:
+        return matches[0]
+    if not matches and patched_pattern is not None:
+        already = list(re.finditer(patched_pattern, content, re.S))
+        if len(already) == 1:
+            return None
+    raise PatchError(
+        f"expected exactly one marker shape for {label}; found {len(matches)}"
+    )
+
+
 class PatchError(RuntimeError):
     """Raised when an upstream bundle is not exactly what this patch expects."""
 
@@ -284,26 +314,53 @@ def patch_granola(archive: AsarArchive, macos_version: str) -> list[PatchResult]
             "Granola's Linux all-output-devices loopback handler is missing"
         )
 
+    capture_source = archive.read_file(capture_files[0])
+
     # Acquire the microphone before the output monitor. The launcher has
     # already selected HSP/HFP when the default input is a Bluetooth headset;
     # this ordering also avoids racing PipeWire device discovery at startup.
-    capture_order_source = (
-        b",[b,x]=P(zee)?await Promise.all([y(`system`),y(`microphone`)])"
-        b":[await y(`system`),await y(`microphone`)];"
+    #
+    # Granola's bundler renames module-local identifiers on almost every
+    # release, so the marker is matched by shape and the captured names are
+    # substituted back. The matched bytes are still handed to patch_exact, so
+    # the replacement stays exact, same-size, and fail-closed.
+    order_label = "Linux Bluetooth microphone-first acquisition"
+    order = match_once(
+        capture_source,
+        rb",\[(?P<system>\w+),(?P<microphone>\w+)\]=\w+\(\w+\)\?"
+        rb"await Promise\.all\(\[(?P<acquire>\w+)\(`system`\),"
+        rb"(?P=acquire)\(`microphone`\)\]\):"
+        rb"\[await (?P=acquire)\(`system`\),"
+        rb"await (?P=acquire)\(`microphone`\)\];",
+        order_label,
+        patched_pattern=rb",\w+=await \w+\(`microphone`\),\w+=\("
+        rb"await new Promise\(e=>setTimeout\(e,1500\)\),"
+        rb"await \w+\(`system`\)\);",
     )
-    capture_order_mic_first = (
-        b",x=await y(`microphone`),b=(await new Promise(e=>setTimeout(e,1500)),"
-        b"await y(`system`));"
-    )
-    results.append(
-        archive.patch_exact(
-            capture_files[0],
-            capture_order_source,
-            capture_order_mic_first,
-            expected=1,
-            label="Linux Bluetooth microphone-first acquisition",
+    if order is None:
+        results.append(
+            PatchResult(capture_files[0], order_label, "already-patched")
         )
-    )
+    else:
+        capture_order_mic_first = (
+            b",%s=await %s(`microphone`),"
+            b"%s=(await new Promise(e=>setTimeout(e,1500)),await %s(`system`));"
+            % (
+                order["microphone"],
+                order["acquire"],
+                order["system"],
+                order["acquire"],
+            )
+        )
+        results.append(
+            archive.patch_exact(
+                capture_files[0],
+                order.group(0),
+                capture_order_mic_first,
+                expected=1,
+                label=order_label,
+            )
+        )
 
     # Opening a Bluetooth microphone switches Linux headsets from A2DP to
     # HSP/HFP. PipeWire recreates the input and output tracks during that
@@ -311,23 +368,60 @@ def patch_granola(archive: AsarArchive, macos_version: str) -> list[PatchResult]
     # path to an audio destination after Granola reconnects the new tracks.
     # The processor never writes to its output, so connecting it to the
     # destination keeps the graph alive without playing the microphone back.
-    worklet_source = (
-        b"c.connect(l);let u=!1,d=!1,f=0,p,m=1e3,g=m,v=0,y,b,x=()=>{let e=P(See);"
-        b"return Number.isFinite(e)?Math.max(0,Math.trunc(e)):0},"
+    #
+    # The AudioContext is read from the node graph rather than assumed: in
+    # 7.478.0 it was the same identifier the capture type later took over, and
+    # connecting to a string's `destination` would throw at runtime.
+    worklet_label = "Linux Bluetooth AudioWorklet keepalive"
+    graph = match_once(
+        capture_source,
+        rb"let (?P<source>\w+)=(?P<context>\w+)\.createMediaStreamSource\("
+        rb"\w+\),(?P<node>\w+)=new AudioWorkletNode\((?P=context),",
+        worklet_label,
     )
-    worklet_keepalive = (
-        b"c.connect(l).connect(t.destination);let u=!1,d=!1,f=0,p,m=1e3,g=m,v=0,"
-        b"y,b,x=()=>Math.max(0,Math.trunc(P(See)||0)),"
+    # The shortened level helper reclaims the bytes that `.connect(...)` costs,
+    # because patch_exact refuses a replacement longer than its source. It
+    # differs from the original only for a non-finite level, which is clamped
+    # to 0 there and passed through here.
+    worklet = match_once(
+        capture_source,
+        re.escape(graph["source"]) + rb"\.connect\(" + re.escape(graph["node"])
+        + rb"\);let (?P<middle>.{0,160}?)(?P<level>\w+)=\(\)=>\{"
+        rb"let (?P<tmp>\w+)=(?P<fn>\w+)\((?P<arg>\w+)\);"
+        rb"return Number\.isFinite\((?P=tmp)\)\?"
+        rb"Math\.max\(0,Math\.trunc\((?P=tmp)\)\):0\},",
+        worklet_label,
+        patched_pattern=re.escape(graph["source"]) + rb"\.connect\("
+        + re.escape(graph["node"]) + rb"\)\.connect\("
+        + re.escape(graph["context"]) + rb"\.destination\);",
     )
-    results.append(
-        archive.patch_exact(
-            capture_files[0],
-            worklet_source,
-            worklet_keepalive,
-            expected=1,
-            label="Linux Bluetooth AudioWorklet keepalive",
+    if worklet is None:
+        results.append(
+            PatchResult(capture_files[0], worklet_label, "already-patched")
         )
-    )
+    else:
+        worklet_keepalive = (
+            b"%s.connect(%s).connect(%s.destination);let %s%s=()=>"
+            b"Math.max(0,Math.trunc(%s(%s)||0)),"
+            % (
+                graph["source"],
+                graph["node"],
+                graph["context"],
+                worklet["middle"],
+                worklet["level"],
+                worklet["fn"],
+                worklet["arg"],
+            )
+        )
+        results.append(
+            archive.patch_exact(
+                capture_files[0],
+                worklet.group(0),
+                worklet_keepalive,
+                expected=1,
+                label=worklet_label,
+            )
+        )
 
     archive.flush()
     return results

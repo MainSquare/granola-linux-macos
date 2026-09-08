@@ -1,0 +1,7 @@
+#!/bin/sh
+# Bound over /usr/bin/xdg-open inside the sandbox. Granola shells out to
+# xdg-open for browser OAuth, and the sandbox has no usable browser profile of
+# its own, so the URL is announced on stdout instead. run-granola reads that
+# marker on the host side and opens https:// URLs there. It deliberately does
+# not open anything itself.
+printf 'GRANOLA_OPEN_URL %s\n' "$1"

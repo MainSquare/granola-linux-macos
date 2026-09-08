@@ -41,6 +41,7 @@ def make_archive(
     *,
     primary_suffix: bytes = b"",
     include_loopback: bool = True,
+    context: bytes = b"t",
 ) -> dict[str, bytes]:
     files = {
         "dist-electron/preload/preload.js": (
@@ -61,6 +62,11 @@ def make_archive(
             b"capture=navigator.mediaDevices.getDisplayMedia({audio:{sampleRate:e},video:!1});"
             b"permission=navigator.mediaDevices.getDisplayMedia({audio:!0,video:!1})"
             + CAPTURE_ORDER_SOURCE
+            # The AudioContext is read from this line rather than assumed, so
+            # the patcher connects the worklet to the right destination.
+            + b"let c=%s.createMediaStreamSource(s),"
+            b"l=new AudioWorkletNode(%s,`audio-capture-processor`);"
+            % (context, context)
             + b"c.connect(l);let u=!1,d=!1,f=0,p,m=1e3,g=m,v=0,y,b,x=()=>{let e=P(See);"
             b"return Number.isFinite(e)?Math.max(0,Math.trunc(e)):0},"
             + primary_suffix
@@ -131,6 +137,20 @@ class PatchAsarTests(unittest.TestCase):
             self.assertTrue(
                 all(result.state == "already-patched" for result in second_results)
             )
+
+    def test_derives_the_audio_context_instead_of_hardcoding_it(self) -> None:
+        # Granola 7.488.3 renamed the AudioContext from `t` to `n`, and reused
+        # `t` for the capture type. Connecting to a hardcoded `t.destination`
+        # would compile fine and throw at runtime on a string.
+        with tempfile.TemporaryDirectory() as temporary:
+            archive_path = Path(temporary) / "app.asar"
+            make_archive(archive_path, context=b"n")
+            archive = PATCH_ASAR.AsarArchive(archive_path)
+            PATCH_ASAR.patch_granola(archive, "15.5.0")
+
+            patched = archive.read_file("dist-app/assets/primary-test.js")
+            self.assertIn(b"c.connect(l).connect(n.destination);", patched)
+            self.assertNotIn(b"t.destination", patched)
 
     def test_rejects_invalid_version(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

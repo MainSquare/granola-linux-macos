@@ -1,0 +1,23 @@
+# Copy to granola.conf (gitignored) and edit, or let the first interactive run
+# of run-granola / desktop.sh prompt and write the answers here for you.
+#
+# Every key is 0 or 1. The environment overrides this file, so a one-off run can
+# always do e.g. GRANOLA_AUDIO=0 ./build/granola/run-granola.
+
+# Bind the host PipeWire and PulseAudio sockets into the sandbox. Off means no
+# audio device reaches Granola at all, which makes it a notes viewer/editor:
+# transcription happens in the desktop client.
+GRANOLA_AUDIO=1
+
+# Let Granola switch a Bluetooth headset to the HSP/HFP profile so its
+# microphone is usable, and restore the previous profile on exit. Off means no
+# pactl call is ever made and your headset profile is never touched. Requires
+# GRANOLA_AUDIO=1. See the Bluetooth section of README.md for the quality
+# tradeoff this exists to manage.
+GRANOLA_BLUETOOTH_HFP=0
+
+# Register granola:// on the host when installing the desktop entry, so the
+# browser can hand the OAuth callback straight to Granola. Off means nothing on
+# your system claims the scheme and the callback URL is delivered by hand once
+# per login.
+GRANOLA_SCHEME_HANDLER=0

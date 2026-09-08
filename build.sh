@@ -8,6 +8,7 @@ CACHE_DIR="$PROJECT_DIR/.cache"
 MACOS_VERSION=""
 DMG_PATH=""
 INSTALL_DESKTOP=0
+DESKTOP_ARGS=()
 
 GRANOLA_DOWNLOAD_URL="https://api.granola.ai/v1/download-latest"
 
@@ -30,6 +31,8 @@ usage() {
     "  --cache-dir DIR                Local artifact cache (default: .cache)" \
     "  --macos-version VERSION        Identity version (default: installer SDK)" \
     "  --install-desktop              Install/update the desktop launcher after building" \
+    "  --scheme-handler               Register granola:// when installing the launcher" \
+    "  --no-scheme-handler            Leave granola:// unclaimed on this host" \
     "  -h, --help                     Show this help"
 }
 
@@ -114,6 +117,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --install-desktop)
       INSTALL_DESKTOP=1
+      shift
+      ;;
+    --scheme-handler|--no-scheme-handler)
+      DESKTOP_ARGS+=("$1")
       shift
       ;;
     -h|--help)
@@ -368,12 +375,18 @@ file "$SQLITE_MODULE/build/Release/better_sqlite3.node" | grep -q 'ELF 64-bit' \
 note "Native SQLite module rebuilt with node-gyp $NODE_GYP_VERSION and $CXX_BIN"
 
 install -m 0755 "$PROJECT_DIR/scripts/run-granola" "$APP_DIR/run-granola"
+install -m 0755 "$PROJECT_DIR/scripts/sandbox-xdg-open" "$APP_DIR/sandbox-xdg-open"
 
+# project_dir lets the installed run-granola find granola.conf. It cannot live
+# in the build directory, which this script replaces wholesale on every build.
+# A containerized build sees a bind-mounted path, so docker-build.sh passes the
+# host path that run-granola will actually resolve.
 cat >"$APP_DIR/.granola-linux-macos-build" <<EOF
 granola_version=$GRANOLA_VERSION
 electron_version=$ELECTRON_VERSION
 macos_identity=$MACOS_VERSION
 dmg_sha256=$DMG_SHA256
+project_dir=${GRANOLA_PROJECT_DIR:-$PROJECT_DIR}
 built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
 
@@ -430,21 +443,13 @@ fi
 rmdir "$ACTIVATION_DIR"
 ACTIVATION_DIR=""
 
-SANDBOX_HELPER="$OUTPUT_DIR/chrome-sandbox"
-if [[ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null)" == "1" \
-  && "$(stat -c '%u %a' "$SANDBOX_HELPER" 2>/dev/null)" != "0 4755" ]]; then
-  printf '\nThis system restricts unprivileged user namespaces, so Electron needs\n'
-  printf 'the setuid sandbox helper. A rebuild resets it; run after every build:\n'
-  printf '  sudo chown root:root %q\n' "$SANDBOX_HELPER"
-  printf '  sudo chmod 4755 %q\n' "$SANDBOX_HELPER"
-fi
-
 printf '\nBuilt Granola %s for Linux with macOS %s product identity.\n' \
   "$GRANOLA_VERSION" "$MACOS_VERSION"
 printf 'Run: %s/run-granola\n' "$OUTPUT_DIR"
 if [[ "$INSTALL_DESKTOP" -eq 1 ]]; then
   step "Installing desktop integration"
-  "$PROJECT_DIR/desktop.sh" install "$OUTPUT_DIR"
+  "$PROJECT_DIR/desktop.sh" install ${DESKTOP_ARGS[@]+"${DESKTOP_ARGS[@]}"} \
+    "$OUTPUT_DIR"
 else
   printf 'Desktop integration: %s/desktop.sh install %s\n' \
     "$PROJECT_DIR" "$OUTPUT_DIR"
