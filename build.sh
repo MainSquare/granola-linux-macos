@@ -380,6 +380,17 @@ if [[ ! -f "$ELECTRON_HEADERS_DIR/include/node/config.gypi" ]]; then
     || die "Electron headers tarball has an unexpected layout"
 fi
 
+# V8 15 dropped HolderV2() and GetPrototypeV2() for the original names, which
+# this addon version still expects the other way round.
+SQLITE_MACROS="$SQLITE_MODULE/src/util/macros.cpp"
+if ! grep -q 'HolderV2\|GetPrototypeV2' \
+    "$ELECTRON_HEADERS_DIR/include/node/v8-function-callback.h" \
+    "$ELECTRON_HEADERS_DIR/include/node/v8-object.h" \
+  && grep -q 'HolderV2()\|GetPrototypeV2()' "$SQLITE_MACROS"; then
+  sed -i 's/HolderV2()/Holder()/; s/GetPrototypeV2()/GetPrototype()/' "$SQLITE_MACROS"
+  note "SQLite addon adapted to V8 without the V2 accessors"
+fi
+
 NATIVE_LOG="$WORK_DIR/native-build.log"
 if ! (
   cd "$SQLITE_MODULE"
