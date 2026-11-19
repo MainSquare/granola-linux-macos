@@ -7,6 +7,7 @@ OUTPUT_DIR="$PROJECT_DIR/build/granola"
 CACHE_DIR="$PROJECT_DIR/.cache"
 MACOS_VERSION=""
 DMG_PATH=""
+SQLITE_SOURCES_DMG=""
 INSTALL_DESKTOP=0
 
 GRANOLA_DOWNLOAD_URL="https://api.granola.ai/v1/download-latest"
@@ -29,6 +30,8 @@ usage() {
     "  --output DIR                   Build destination (default: build/granola)" \
     "  --cache-dir DIR                Local artifact cache (default: .cache)" \
     "  --macos-version VERSION        Identity version (default: installer SDK)" \
+    "  --sqlite-sources-dmg DMG       Older official DMG with the SQLite addon's sources," \
+    "                                 for installers that no longer ship them" \
     "  --install-desktop              Install/update the desktop launcher after building" \
     "  -h, --help                     Show this help"
 }
@@ -49,6 +52,8 @@ usage() {
 #   --output DIR                   Build destination (default: build/granola)
 #   --cache-dir DIR                Local artifact cache (default: .cache)
 #   --macos-version VERSION        Identity version (default: installer SDK)
+#   --sqlite-sources-dmg DMG       Older official DMG with the SQLite addon's sources,
+#                                  for installers that no longer ship them
 #   --install-desktop              Install/update the desktop launcher after building
 #   -h, --help                     Show this help
 
@@ -107,6 +112,11 @@ while [[ $# -gt 0 ]]; do
     --macos-version)
       [[ $# -ge 2 ]] || die "--macos-version requires a version"
       MACOS_VERSION="$2"
+      shift 2
+      ;;
+    --sqlite-sources-dmg)
+      [[ $# -ge 2 ]] || die "--sqlite-sources-dmg requires a DMG"
+      SQLITE_SOURCES_DMG="$2"
       shift 2
       ;;
     --download-latest)
@@ -188,6 +198,10 @@ mkdir -p "$CACHE_DIR" "$(dirname "$OUTPUT_DIR")"
 
 DMG_PATH="$(realpath -m "$DMG_PATH")"
 [[ -f "$DMG_PATH" ]] || die "DMG not found: $DMG_PATH"
+if [[ -n "$SQLITE_SOURCES_DMG" ]]; then
+  SQLITE_SOURCES_DMG="$(realpath -m "$SQLITE_SOURCES_DMG")"
+  [[ -f "$SQLITE_SOURCES_DMG" ]] || die "DMG not found: $SQLITE_SOURCES_DMG"
+fi
 
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/granola-linux-macos.XXXXXXXX")"
 ACTIVATION_DIR=""
@@ -282,6 +296,11 @@ cp -a "$DMG_EXTRACT/$RESOURCE_PATH/app.asar" \
 [[ -f "$APP_DIR/resources/icons/mac-icon.png" ]] \
   || die "Granola app icon was not found in the installer"
 cp "$APP_DIR/resources/icons/mac-icon.png" "$APP_DIR/granola-app-icon.png"
+# The macOS tray icon is a black template glyph; use the Windows tray's badge.
+python3 "$PROJECT_DIR/scripts/ico_png.py" "$APP_DIR/resources/icons/win-tray.ico" 32 \
+  "$APP_DIR/resources/icons/linux-tray.png"
+python3 "$PROJECT_DIR/scripts/ico_png.py" "$APP_DIR/resources/icons/win-tray.ico" 64 \
+  "$APP_DIR/resources/icons/linux-tray@2x.png"
 
 step "Applying the split macOS/Linux identity patch"
 PATCH_ARGS=(
@@ -301,6 +320,27 @@ SQLITE_INTEGRITY="$(jq -r --arg version "$SQLITE_VERSION" \
   "$PROJECT_DIR/locks/npm-sources.json")"
 [[ -n "$SQLITE_INTEGRITY" ]] || die \
   "better-sqlite3-multiple-ciphers $SQLITE_VERSION is not reviewed in locks/npm-sources.json"
+
+# Granola patches this addon (an updateHook method, newer V8 support) and
+# 7.786.3 stopped shipping its C++ sources, so take them from an older DMG.
+if [[ ! -d "$SQLITE_MODULE/src" || ! -d "$SQLITE_MODULE/deps" ]]; then
+  [[ -n "$SQLITE_SOURCES_DMG" ]] || die \
+    "this installer no longer ships the SQLite addon's sources; pass --sqlite-sources-dmg with an older official DMG that has them (see README)"
+  SOURCES_EXTRACT="$WORK_DIR/sqlite-sources"
+  SOURCES_MODULE="$SOURCES_EXTRACT/$RESOURCE_PATH/app.asar.unpacked/node_modules/better-sqlite3-multiple-ciphers"
+  "$SEVENZZ" x "$SQLITE_SOURCES_DMG" \
+    "$RESOURCE_PATH/app.asar.unpacked/node_modules/better-sqlite3-multiple-ciphers" \
+    -o"$SOURCES_EXTRACT" -y >/dev/null \
+    || die "cannot extract the SQLite addon from $SQLITE_SOURCES_DMG"
+  [[ -d "$SOURCES_MODULE/src" && -d "$SOURCES_MODULE/deps" ]] \
+    || die "$SQLITE_SOURCES_DMG does not ship the SQLite addon's sources either"
+  [[ "$(node -p "require('$SOURCES_MODULE/package.json').version")" == "$SQLITE_VERSION" ]] \
+    || die "$SQLITE_SOURCES_DMG has a different SQLite addon version than $SQLITE_VERSION"
+  diff -r "$SOURCES_MODULE/lib" "$SQLITE_MODULE/lib" >/dev/null \
+    || die "the SQLite addon's JavaScript differs between the two DMGs, so the older sources may not match"
+  cp -a "$SOURCES_MODULE/src" "$SOURCES_MODULE/deps" "$SQLITE_MODULE/"
+  note "SQLite addon sources taken from $(basename "$SQLITE_SOURCES_DMG")"
+fi
 
 NPM_SOURCE_DIR="$CACHE_DIR/npm-sources"
 mkdir -p "$NPM_SOURCE_DIR"
@@ -345,6 +385,17 @@ if [[ ! -f "$ELECTRON_HEADERS_DIR/include/node/config.gypi" ]]; then
     || die "Electron headers tarball has an unexpected layout"
 fi
 
+# V8 15 dropped HolderV2() and GetPrototypeV2() for the original names, which
+# this addon version still expects the other way round.
+SQLITE_MACROS="$SQLITE_MODULE/src/util/macros.cpp"
+if ! grep -q 'HolderV2\|GetPrototypeV2' \
+    "$ELECTRON_HEADERS_DIR/include/node/v8-function-callback.h" \
+    "$ELECTRON_HEADERS_DIR/include/node/v8-object.h" \
+  && grep -q 'HolderV2()\|GetPrototypeV2()' "$SQLITE_MACROS"; then
+  sed -i 's/HolderV2()/Holder()/; s/GetPrototypeV2()/GetPrototype()/' "$SQLITE_MACROS"
+  note "SQLite addon adapted to V8 without the V2 accessors"
+fi
+
 NATIVE_LOG="$WORK_DIR/native-build.log"
 if ! (
   cd "$SQLITE_MODULE"
@@ -368,6 +419,10 @@ file "$SQLITE_MODULE/build/Release/better_sqlite3.node" | grep -q 'ELF 64-bit' \
 note "Native SQLite module rebuilt with node-gyp $NODE_GYP_VERSION and $CXX_BIN"
 
 install -m 0755 "$PROJECT_DIR/scripts/run-granola" "$APP_DIR/run-granola"
+install -D -m 0755 "$PROJECT_DIR/scripts/meet-consent-host" \
+  "$APP_DIR/resources/native-host/meet-consent-host"
+install -m 0644 "$PROJECT_DIR/scripts/linux-mic-apps.js" \
+  "$APP_DIR/resources/linux-mic-apps.js"
 
 cat >"$APP_DIR/.granola-linux-macos-build" <<EOF
 granola_version=$GRANOLA_VERSION

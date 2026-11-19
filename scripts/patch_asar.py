@@ -238,10 +238,73 @@ def patch_granola(archive: AsarArchive, macos_version: str) -> list[PatchResult]
         ),
         archive.patch_exact(
             main,
-            b"async function u(e){e(await N.systemPreferences.askForMediaAccess(`microphone`))}",
-            b"async function u(e){e(!0)}",
+            b"async function f(e){e(await k.systemPreferences.askForMediaAccess(`microphone`))}",
+            b"async function f(e){e(!0)}",
             expected=1,
             label="Linux browser microphone permission bridge",
+        ),
+        # The binary's name makes Electron treat this build as unpackaged, so
+        # Granola looks for its Meet consent host inside app.asar. Point it at
+        # the packaged location, where build.sh installs the Linux relay.
+        archive.patch_exact(
+            main,
+            b"let t=k.app.getAppPath();if(process.platform===`win32`)"
+            b"return v.join(t,`native`,`windows`,e);"
+            b"let n=process.arch===`arm64`?`arm64`:`x64`;return v.join(t,`native`,n,e)",
+            b"return v.join(process.resourcesPath,`native-host`,e)",
+            expected=1,
+            label="Meet consent native host path",
+        ),
+        # Granola detects meetings from the apps using the microphone, but has
+        # no Linux source for that list. Run the macOS observer on Linux and
+        # point its helper process at the PipeWire script build.sh installs.
+        archive.patch_exact(
+            main,
+            b"process.platform===`win32`?hBe:e=>(e([]),()=>{})",
+            b"process.platform===`win32`?hBe:ZRe",
+            expected=1,
+            label="Linux mic apps observer",
+        ),
+        archive.patch_exact(
+            main,
+            b"function ZRe(e){return process.platform!==`darwin`||!bO?()=>{}:(",
+            b"function ZRe(e){return(",
+            expected=1,
+            label="Linux mic apps observer platform check",
+        ),
+        archive.patch_exact(
+            main,
+            b"URe=h.default.join(`${__dirname}/../macos_mic_apps_with_devices_process`,`index.js`)",
+            b"URe=h.default.join(process.resourcesPath,`linux-mic-apps.js`)",
+            expected=1,
+            label="Linux mic apps helper path",
+        ),
+        # Dragging the meeting prompt goes through X11, which fails with
+        # BadWindow under Wayland, and Xlib's default handler exits Granola.
+        archive.patch_exact(
+            main,
+            b"if(!$||$.isDestroyed())return;let e=$.getNativeWindowHandle();"
+            b"ve.default.startDrag(e)",
+            b"process.env.WAYLAND_DISPLAY||ve.default.startDrag($.getNativeWindowHandle())",
+            expected=1,
+            label="Wayland meeting prompt drag",
+        ),
+        # Unpackaged, Granola reads its icons from app.asar/resources/icons,
+        # which does not exist, so the tray showed an empty image.
+        archive.patch_exact(
+            main,
+            b"h7=k.app.isPackaged?(0,h.join)(process.resourcesPath,`icons`)"
+            b":(0,h.join)(k.app.getAppPath(),`resources/icons`)",
+            b"h7=(0,h.join)(process.resourcesPath,`icons`)",
+            expected=1,
+            label="icons directory",
+        ),
+        archive.patch_exact(
+            main,
+            b"Hpt=(process.platform,`iconTemplate.png`)",
+            b"Hpt=(process.platform,`linux-tray.png`)",
+            expected=1,
+            label="Linux tray icon",
         ),
     ]
 
@@ -288,12 +351,12 @@ def patch_granola(archive: AsarArchive, macos_version: str) -> list[PatchResult]
     # already selected HSP/HFP when the default input is a Bluetooth headset;
     # this ordering also avoids racing PipeWire device discovery at startup.
     capture_order_source = (
-        b",[b,x]=P(zee)?await Promise.all([y(`system`),y(`microphone`)])"
-        b":[await y(`system`),await y(`microphone`)];"
+        b",[E,D]=si(c)?await Promise.all([T(`system`),T(`microphone`)])"
+        b":[await T(`system`),await T(`microphone`)],O=E;"
     )
     capture_order_mic_first = (
-        b",x=await y(`microphone`),b=(await new Promise(e=>setTimeout(e,1500)),"
-        b"await y(`system`));"
+        b",D=await T(`microphone`),E=(await new Promise(e=>setTimeout(e,1500)),"
+        b"await T(`system`)),O=E;"
     )
     results.append(
         archive.patch_exact(
@@ -312,12 +375,12 @@ def patch_granola(archive: AsarArchive, macos_version: str) -> list[PatchResult]
     # The processor never writes to its output, so connecting it to the
     # destination keeps the graph alive without playing the microphone back.
     worklet_source = (
-        b"c.connect(l);let u=!1,d=!1,f=0,p,m=1e3,g=m,v=0,y,b,x=()=>{let e=P(See);"
+        b"c.connect(l);let u=!1,d=!1,f=0,p=!1,m,h=1e3,g=h,y=0,x,C,w=()=>{let e=si(ete);"
         b"return Number.isFinite(e)?Math.max(0,Math.trunc(e)):0},"
     )
     worklet_keepalive = (
-        b"c.connect(l).connect(t.destination);let u=!1,d=!1,f=0,p,m=1e3,g=m,v=0,"
-        b"y,b,x=()=>Math.max(0,Math.trunc(P(See)||0)),"
+        b"c.connect(l).connect(n.destination);let u=!1,d=!1,f=0,p=!1,m,h=1e3,g=h,y=0,"
+        b"x,C,w=()=>Math.max(0,Math.trunc(si(ete)||0)),"
     )
     results.append(
         archive.patch_exact(
