@@ -296,6 +296,11 @@ cp -a "$DMG_EXTRACT/$RESOURCE_PATH/app.asar" \
 [[ -f "$APP_DIR/resources/icons/mac-icon.png" ]] \
   || die "Granola app icon was not found in the installer"
 cp "$APP_DIR/resources/icons/mac-icon.png" "$APP_DIR/granola-app-icon.png"
+# The macOS tray icon is a black template glyph; use the Windows tray's badge.
+python3 "$PROJECT_DIR/scripts/ico_png.py" "$APP_DIR/resources/icons/win-tray.ico" 32 \
+  "$APP_DIR/resources/icons/linux-tray.png"
+python3 "$PROJECT_DIR/scripts/ico_png.py" "$APP_DIR/resources/icons/win-tray.ico" 64 \
+  "$APP_DIR/resources/icons/linux-tray@2x.png"
 
 step "Applying the split macOS/Linux identity patch"
 PATCH_ARGS=(

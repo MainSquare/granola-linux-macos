@@ -289,6 +289,23 @@ def patch_granola(archive: AsarArchive, macos_version: str) -> list[PatchResult]
             expected=1,
             label="Wayland meeting prompt drag",
         ),
+        # Unpackaged, Granola reads its icons from app.asar/resources/icons,
+        # which does not exist, so the tray showed an empty image.
+        archive.patch_exact(
+            main,
+            b"h7=k.app.isPackaged?(0,h.join)(process.resourcesPath,`icons`)"
+            b":(0,h.join)(k.app.getAppPath(),`resources/icons`)",
+            b"h7=(0,h.join)(process.resourcesPath,`icons`)",
+            expected=1,
+            label="icons directory",
+        ),
+        archive.patch_exact(
+            main,
+            b"Hpt=(process.platform,`iconTemplate.png`)",
+            b"Hpt=(process.platform,`linux-tray.png`)",
+            expected=1,
+            label="Linux tray icon",
+        ),
     ]
 
     if b"process.platform===`linux`" not in archive.read_file(main):

@@ -61,6 +61,9 @@ def make_archive(
             b"process.platform===`win32`?hBe:e=>(e([]),()=>{})}"
             b"X(`nub:start-drag`,async()=>{try{if(!$||$.isDestroyed())return;"
             b"let e=$.getNativeWindowHandle();ve.default.startDrag(e)}catch(e){console.error(e)}});"
+            b"var h7=k.app.isPackaged?(0,h.join)(process.resourcesPath,`icons`)"
+            b":(0,h.join)(k.app.getAppPath(),`resources/icons`),"
+            b"Hpt=(process.platform,`iconTemplate.png`);"
             + (
                 b"handler={audio:{name:`All loopback devices`,id:`loopbackAllDevices`}}"
                 if include_loopback
@@ -126,6 +129,8 @@ class PatchAsarTests(unittest.TestCase):
             self.assertIn(b"function ZRe(e){return(", main)
             self.assertIn(b"URe=h.default.join(process.resourcesPath,`linux-mic-apps.js`)", main)
             self.assertIn(b"process.env.WAYLAND_DISPLAY||ve.default.startDrag(", main)
+            self.assertIn(b"h7=(0,h.join)(process.resourcesPath,`icons`)", main)
+            self.assertIn(b"Hpt=(process.platform,`linux-tray.png`)", main)
             self.assertEqual(primary.count(b"video:!1"), 2)
             self.assertIn(
                 b"D=await T(`microphone`),E=(await new Promise",
