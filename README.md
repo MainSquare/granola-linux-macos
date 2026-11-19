@@ -55,13 +55,14 @@ Granola's web app can view and edit notes, but
 - 7-Zip's `7zz` binary (or set `GRANOLA_7ZZ`) to extract the DMG.
 - Python 3, curl, jq, tar, xz, make, `file`, and GCC/G++ 11 or newer.
 - `pactl` for automatic Bluetooth headset microphone profile management.
+- `pw-dump` (package `pipewire-bin` on Debian and Ubuntu) for meeting detection.
 - Normal Electron runtime libraries for your distribution, including GTK, NSS,
   GBM, and ALSA.
 
 On Pop!_OS/Ubuntu, most build prerequisites can be installed with:
 
 ```bash
-sudo apt install 7zip build-essential curl file jq make npm pulseaudio-utils python3 xz-utils
+sudo apt install 7zip build-essential curl file jq make npm pipewire-bin pulseaudio-utils python3 xz-utils
 ```
 
 Check `node --version` separately: the distribution's default Node.js may be too
