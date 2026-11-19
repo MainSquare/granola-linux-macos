@@ -59,6 +59,8 @@ def make_archive(
             b"function ZRe(e){return process.platform!==`darwin`||!bO?()=>{}:(zO=e,()=>{})}"
             b"function yBe(){return process.platform===`darwin`?ZRe:"
             b"process.platform===`win32`?hBe:e=>(e([]),()=>{})}"
+            b"X(`nub:start-drag`,async()=>{try{if(!$||$.isDestroyed())return;"
+            b"let e=$.getNativeWindowHandle();ve.default.startDrag(e)}catch(e){console.error(e)}});"
             + (
                 b"handler={audio:{name:`All loopback devices`,id:`loopbackAllDevices`}}"
                 if include_loopback
@@ -123,6 +125,7 @@ class PatchAsarTests(unittest.TestCase):
             self.assertIn(b"process.platform===`win32`?hBe:ZRe", main)
             self.assertIn(b"function ZRe(e){return(", main)
             self.assertIn(b"URe=h.default.join(process.resourcesPath,`linux-mic-apps.js`)", main)
+            self.assertIn(b"process.env.WAYLAND_DISPLAY||ve.default.startDrag(", main)
             self.assertEqual(primary.count(b"video:!1"), 2)
             self.assertIn(
                 b"D=await T(`microphone`),E=(await new Promise",

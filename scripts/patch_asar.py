@@ -279,6 +279,16 @@ def patch_granola(archive: AsarArchive, macos_version: str) -> list[PatchResult]
             expected=1,
             label="Linux mic apps helper path",
         ),
+        # Dragging the meeting prompt goes through X11, which fails with
+        # BadWindow under Wayland, and Xlib's default handler exits Granola.
+        archive.patch_exact(
+            main,
+            b"if(!$||$.isDestroyed())return;let e=$.getNativeWindowHandle();"
+            b"ve.default.startDrag(e)",
+            b"process.env.WAYLAND_DISPLAY||ve.default.startDrag($.getNativeWindowHandle())",
+            expected=1,
+            label="Wayland meeting prompt drag",
+        ),
     ]
 
     if b"process.platform===`linux`" not in archive.read_file(main):
