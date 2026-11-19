@@ -18,8 +18,8 @@ sys.modules[SPEC.name] = PATCH_ASAR
 SPEC.loader.exec_module(PATCH_ASAR)
 
 CAPTURE_ORDER_SOURCE = (
-    b",[b,x]=P(zee)?await Promise.all([y(`system`),y(`microphone`)])"
-    b":[await y(`system`),await y(`microphone`)];"
+    b",[E,D]=si(c)?await Promise.all([T(`system`),T(`microphone`)])"
+    b":[await T(`system`),await T(`microphone`)],O=E;"
 )
 
 
@@ -50,7 +50,7 @@ def make_archive(
         "dist-electron/main/index.js": (
             b"identity=x===`darwin`?`macOS`:x===`win32`?`Windows`:process.platform;"
             b"audio=process.platform===`linux`?`browser`:`native`;"
-            b"async function u(e){e(await N.systemPreferences.askForMediaAccess(`microphone`))};"
+            b"async function f(e){e(await k.systemPreferences.askForMediaAccess(`microphone`))};"
             + (
                 b"handler={audio:{name:`All loopback devices`,id:`loopbackAllDevices`}}"
                 if include_loopback
@@ -61,7 +61,7 @@ def make_archive(
             b"capture=navigator.mediaDevices.getDisplayMedia({audio:{sampleRate:e},video:!1});"
             b"permission=navigator.mediaDevices.getDisplayMedia({audio:!0,video:!1})"
             + CAPTURE_ORDER_SOURCE
-            + b"c.connect(l);let u=!1,d=!1,f=0,p,m=1e3,g=m,v=0,y,b,x=()=>{let e=P(See);"
+            + b"c.connect(l);let u=!1,d=!1,f=0,p=!1,m,h=1e3,g=h,y=0,x,C,w=()=>{let e=si(ete);"
             b"return Number.isFinite(e)?Math.max(0,Math.trunc(e)):0},"
             + primary_suffix
         ),
@@ -107,17 +107,17 @@ class PatchAsarTests(unittest.TestCase):
             self.assertIn(b"osVersion:`15.5.0`", preload)
             self.assertIn(b"?`Windows`:`macOS`", main)
             self.assertIn(b"process.platform===`linux`", main)
-            self.assertIn(b"async function u(e){e(!0)}", main)
+            self.assertIn(b"async function f(e){e(!0)}", main)
             self.assertEqual(primary.count(b"video:!1"), 2)
             self.assertIn(
-                b"x=await y(`microphone`),b=(await new Promise",
+                b"D=await T(`microphone`),E=(await new Promise",
                 primary,
             )
-            self.assertNotIn(b"x?.stop(),x=b", primary)
-            self.assertNotIn(b"[b,x]=P(zee)?await Promise.all", primary)
-            self.assertIn(b"c.connect(l).connect(t.destination)", primary)
+            self.assertNotIn(b"D?.stop(),D=E", primary)
+            self.assertNotIn(b"[E,D]=si(c)?await Promise.all", primary)
+            self.assertIn(b"c.connect(l).connect(n.destination)", primary)
             self.assertNotIn(
-                b"c.connect(l);let u=!1,d=!1,f=0,p,m=1e3", primary
+                b"c.connect(l);let u=!1,d=!1,f=0,p=!1,m,h=1e3", primary
             )
 
             for archive_path in reopened.iter_files():
