@@ -66,14 +66,22 @@ def relay_chrome_to_app() -> None:
     os._exit(0)
 
 
+def peer_uid(connection: socket.socket) -> int:
+    credentials = connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("iII"))
+    return struct.unpack("iII", credentials)[1]
+
+
 def connect_to_app() -> socket.socket | None:
     for path in socket_paths():
         candidate = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             candidate.connect(path)
-            return candidate
+            # Another local user can bind these /tmp paths before Granola does.
+            if peer_uid(candidate) == os.getuid():
+                return candidate
         except OSError:
-            candidate.close()
+            pass
+        candidate.close()
     return None
 
 
