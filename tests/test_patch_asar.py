@@ -51,6 +51,10 @@ def make_archive(
             b"identity=x===`darwin`?`macOS`:x===`win32`?`Windows`:process.platform;"
             b"audio=process.platform===`linux`?`browser`:`native`;"
             b"async function f(e){e(await k.systemPreferences.askForMediaAccess(`microphone`))};"
+            b"function Uqe(){let e=`meet-consent-host`;"
+            b"let t=k.app.getAppPath();if(process.platform===`win32`)"
+            b"return v.join(t,`native`,`windows`,e);"
+            b"let n=process.arch===`arm64`?`arm64`:`x64`;return v.join(t,`native`,n,e)};"
             + (
                 b"handler={audio:{name:`All loopback devices`,id:`loopbackAllDevices`}}"
                 if include_loopback
@@ -108,6 +112,10 @@ class PatchAsarTests(unittest.TestCase):
             self.assertIn(b"?`Windows`:`macOS`", main)
             self.assertIn(b"process.platform===`linux`", main)
             self.assertIn(b"async function f(e){e(!0)}", main)
+            self.assertIn(
+                b"return v.join(process.resourcesPath,`native-host`,e)", main
+            )
+            self.assertNotIn(b"k.app.getAppPath()", main)
             self.assertEqual(primary.count(b"video:!1"), 2)
             self.assertIn(
                 b"D=await T(`microphone`),E=(await new Promise",

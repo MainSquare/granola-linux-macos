@@ -243,6 +243,18 @@ def patch_granola(archive: AsarArchive, macos_version: str) -> list[PatchResult]
             expected=1,
             label="Linux browser microphone permission bridge",
         ),
+        # The binary's name makes Electron treat this build as unpackaged, so
+        # Granola looks for its Meet consent host inside app.asar. Point it at
+        # the packaged location, where build.sh installs the Linux relay.
+        archive.patch_exact(
+            main,
+            b"let t=k.app.getAppPath();if(process.platform===`win32`)"
+            b"return v.join(t,`native`,`windows`,e);"
+            b"let n=process.arch===`arm64`?`arm64`:`x64`;return v.join(t,`native`,n,e)",
+            b"return v.join(process.resourcesPath,`native-host`,e)",
+            expected=1,
+            label="Meet consent native host path",
+        ),
     ]
 
     if b"process.platform===`linux`" not in archive.read_file(main):

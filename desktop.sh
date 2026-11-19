@@ -7,6 +7,14 @@ ACTION="${1:-}"
 APP_DIR="${2:-$PROJECT_DIR/build/granola}"
 APPLICATIONS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 DESKTOP_FILE="$APPLICATIONS_DIR/granola-linux-macos.desktop"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}"
+NATIVE_HOST_MANIFEST="com.granola.app.json"
+# Granola registers its Meet consent host only in macOS and Windows browser
+# locations, so the Granola Companion extension needs the Linux ones from here.
+BROWSER_CONFIG_DIRS=(
+  google-chrome google-chrome-beta google-chrome-unstable chromium
+  BraveSoftware/Brave-Browser microsoft-edge vivaldi
+)
 
 die() {
   printf 'error: %s\n' "$*" >&2
@@ -61,6 +69,28 @@ EOF
       && xdg-mime default "$(basename "$DESKTOP_FILE")" \
         x-scheme-handler/granola >/dev/null 2>&1 || true
     printf 'Installed desktop entry: %s\n' "$DESKTOP_FILE"
+    NATIVE_HOST="$APP_DIR/resources/native-host/meet-consent-host"
+    if [[ -x "$NATIVE_HOST" ]]; then
+      for browser_dir in "${BROWSER_CONFIG_DIRS[@]}"; do
+        [[ -d "$CONFIG_DIR/$browser_dir" ]] || continue
+        mkdir -p "$CONFIG_DIR/$browser_dir/NativeMessagingHosts"
+        manifest="$CONFIG_DIR/$browser_dir/NativeMessagingHosts/$NATIVE_HOST_MANIFEST"
+        cat >"$manifest" <<EOF
+{
+  "name": "com.granola.app",
+  "description": "Granola meeting notes - consent messaging",
+  "path": "$NATIVE_HOST",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://fihphjchjdimokpleomddhnapnobdphn/",
+    "chrome-extension://ephifgbopdapgehlpnakaddgmmgcbmjp/",
+    "chrome-extension://opaadbjlebbbnmjjgdmdllingedoleml/"
+  ]
+}
+EOF
+        printf 'Installed Granola Companion host for %s: %s\n' "$browser_dir" "$manifest"
+      done
+    fi
     ;;
   uninstall)
     [[ $# -eq 1 ]] || die "uninstall does not accept additional arguments"
@@ -70,6 +100,13 @@ EOF
     else
       printf 'Desktop entry is already absent: %s\n' "$DESKTOP_FILE"
     fi
+    for browser_dir in "${BROWSER_CONFIG_DIRS[@]}"; do
+      manifest="$CONFIG_DIR/$browser_dir/NativeMessagingHosts/$NATIVE_HOST_MANIFEST"
+      if [[ -f "$manifest" ]]; then
+        rm -- "$manifest"
+        printf 'Removed Granola Companion host: %s\n' "$manifest"
+      fi
+    done
     command -v update-desktop-database >/dev/null \
       && update-desktop-database "$APPLICATIONS_DIR" >/dev/null 2>&1 || true
     ;;

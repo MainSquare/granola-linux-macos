@@ -39,7 +39,7 @@ Tested on Pop!_OS 24.04 with COSMIC/Wayland using Granola 7.469.1 and Electron
 | Microphone capture | PipeWire capture and live transcription verified with built-in and Bluetooth HFP microphones |
 | System/meeting audio | Uses Granola's built-in all-output-devices loopback path; sustained capture verified, real meeting audio still needs testing |
 | Global shortcuts | Limited on Wayland; Granola's bundle does not ship the Linux X11 key server |
-| Google Meet consent helper | Unavailable; the official helper in the macOS installer is Mach-O-only |
+| Granola Companion extension (Google Meet consent helper) | A Python relay replaces the Mach-O-only official host; `desktop.sh` registers it for Chromium-based browsers. Connection verified in Chrome |
 | Self-update | Unavailable; rebuild from a new official DMG instead |
 
 Do a disposable test meeting before relying on this for an important call.

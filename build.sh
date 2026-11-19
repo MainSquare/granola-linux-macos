@@ -414,6 +414,8 @@ file "$SQLITE_MODULE/build/Release/better_sqlite3.node" | grep -q 'ELF 64-bit' \
 note "Native SQLite module rebuilt with node-gyp $NODE_GYP_VERSION and $CXX_BIN"
 
 install -m 0755 "$PROJECT_DIR/scripts/run-granola" "$APP_DIR/run-granola"
+install -D -m 0755 "$PROJECT_DIR/scripts/meet-consent-host" \
+  "$APP_DIR/resources/native-host/meet-consent-host"
 
 cat >"$APP_DIR/.granola-linux-macos-build" <<EOF
 granola_version=$GRANOLA_VERSION
