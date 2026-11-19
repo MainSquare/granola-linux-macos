@@ -7,6 +7,7 @@ OUTPUT_DIR="$PROJECT_DIR/build/granola"
 CACHE_DIR="$PROJECT_DIR/.cache"
 MACOS_VERSION=""
 DMG_PATH=""
+SQLITE_SOURCES_DMG=""
 INSTALL_DESKTOP=0
 
 GRANOLA_DOWNLOAD_URL="https://api.granola.ai/v1/download-latest"
@@ -29,6 +30,8 @@ usage() {
     "  --output DIR                   Build destination (default: build/granola)" \
     "  --cache-dir DIR                Local artifact cache (default: .cache)" \
     "  --macos-version VERSION        Identity version (default: installer SDK)" \
+    "  --sqlite-sources-dmg DMG       Older official DMG with the SQLite addon's sources," \
+    "                                 for installers that no longer ship them" \
     "  --install-desktop              Install/update the desktop launcher after building" \
     "  -h, --help                     Show this help"
 }
@@ -49,6 +52,8 @@ usage() {
 #   --output DIR                   Build destination (default: build/granola)
 #   --cache-dir DIR                Local artifact cache (default: .cache)
 #   --macos-version VERSION        Identity version (default: installer SDK)
+#   --sqlite-sources-dmg DMG       Older official DMG with the SQLite addon's sources,
+#                                  for installers that no longer ship them
 #   --install-desktop              Install/update the desktop launcher after building
 #   -h, --help                     Show this help
 
@@ -107,6 +112,11 @@ while [[ $# -gt 0 ]]; do
     --macos-version)
       [[ $# -ge 2 ]] || die "--macos-version requires a version"
       MACOS_VERSION="$2"
+      shift 2
+      ;;
+    --sqlite-sources-dmg)
+      [[ $# -ge 2 ]] || die "--sqlite-sources-dmg requires a DMG"
+      SQLITE_SOURCES_DMG="$2"
       shift 2
       ;;
     --download-latest)
@@ -188,6 +198,10 @@ mkdir -p "$CACHE_DIR" "$(dirname "$OUTPUT_DIR")"
 
 DMG_PATH="$(realpath -m "$DMG_PATH")"
 [[ -f "$DMG_PATH" ]] || die "DMG not found: $DMG_PATH"
+if [[ -n "$SQLITE_SOURCES_DMG" ]]; then
+  SQLITE_SOURCES_DMG="$(realpath -m "$SQLITE_SOURCES_DMG")"
+  [[ -f "$SQLITE_SOURCES_DMG" ]] || die "DMG not found: $SQLITE_SOURCES_DMG"
+fi
 
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/granola-linux-macos.XXXXXXXX")"
 ACTIVATION_DIR=""
@@ -301,6 +315,27 @@ SQLITE_INTEGRITY="$(jq -r --arg version "$SQLITE_VERSION" \
   "$PROJECT_DIR/locks/npm-sources.json")"
 [[ -n "$SQLITE_INTEGRITY" ]] || die \
   "better-sqlite3-multiple-ciphers $SQLITE_VERSION is not reviewed in locks/npm-sources.json"
+
+# Granola patches this addon (an updateHook method, newer V8 support) and
+# 7.786.3 stopped shipping its C++ sources, so take them from an older DMG.
+if [[ ! -d "$SQLITE_MODULE/src" || ! -d "$SQLITE_MODULE/deps" ]]; then
+  [[ -n "$SQLITE_SOURCES_DMG" ]] || die \
+    "this installer no longer ships the SQLite addon's sources; pass --sqlite-sources-dmg with an older official DMG that has them (see README)"
+  SOURCES_EXTRACT="$WORK_DIR/sqlite-sources"
+  SOURCES_MODULE="$SOURCES_EXTRACT/$RESOURCE_PATH/app.asar.unpacked/node_modules/better-sqlite3-multiple-ciphers"
+  "$SEVENZZ" x "$SQLITE_SOURCES_DMG" \
+    "$RESOURCE_PATH/app.asar.unpacked/node_modules/better-sqlite3-multiple-ciphers" \
+    -o"$SOURCES_EXTRACT" -y >/dev/null \
+    || die "cannot extract the SQLite addon from $SQLITE_SOURCES_DMG"
+  [[ -d "$SOURCES_MODULE/src" && -d "$SOURCES_MODULE/deps" ]] \
+    || die "$SQLITE_SOURCES_DMG does not ship the SQLite addon's sources either"
+  [[ "$(node -p "require('$SOURCES_MODULE/package.json').version")" == "$SQLITE_VERSION" ]] \
+    || die "$SQLITE_SOURCES_DMG has a different SQLite addon version than $SQLITE_VERSION"
+  diff -r "$SOURCES_MODULE/lib" "$SQLITE_MODULE/lib" >/dev/null \
+    || die "the SQLite addon's JavaScript differs between the two DMGs, so the older sources may not match"
+  cp -a "$SOURCES_MODULE/src" "$SOURCES_MODULE/deps" "$SQLITE_MODULE/"
+  note "SQLite addon sources taken from $(basename "$SQLITE_SOURCES_DMG")"
+fi
 
 NPM_SOURCE_DIR="$CACHE_DIR/npm-sources"
 mkdir -p "$NPM_SOURCE_DIR"

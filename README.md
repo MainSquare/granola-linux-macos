@@ -80,6 +80,14 @@ Or supply an official DMG you already downloaded:
 ./build.sh --install-desktop /path/to/Granola.dmg
 ```
 
+Since 7.786.3, Granola's installer no longer ships the C++ sources of its patched SQLite addon.
+Also download the official [7.478.0 installer](https://dr2v7l5emb758.cloudfront.net/7.478.0/Granola-7.478.0-mac-universal.dmg), which still has them, and pass it with `--sqlite-sources-dmg`.
+The build only uses those sources when both installers carry the same addon version and JavaScript.
+
+```bash
+./build.sh --install-desktop --sqlite-sources-dmg /path/to/Granola-7.478.0-mac-universal.dmg /path/to/Granola.dmg
+```
+
 The runnable app is created at `build/granola`. Start it from your application
 launcher or run:
 
