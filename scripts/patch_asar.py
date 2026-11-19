@@ -255,6 +255,30 @@ def patch_granola(archive: AsarArchive, macos_version: str) -> list[PatchResult]
             expected=1,
             label="Meet consent native host path",
         ),
+        # Granola detects meetings from the apps using the microphone, but has
+        # no Linux source for that list. Run the macOS observer on Linux and
+        # point its helper process at the PipeWire script build.sh installs.
+        archive.patch_exact(
+            main,
+            b"process.platform===`win32`?hBe:e=>(e([]),()=>{})",
+            b"process.platform===`win32`?hBe:ZRe",
+            expected=1,
+            label="Linux mic apps observer",
+        ),
+        archive.patch_exact(
+            main,
+            b"function ZRe(e){return process.platform!==`darwin`||!bO?()=>{}:(",
+            b"function ZRe(e){return(",
+            expected=1,
+            label="Linux mic apps observer platform check",
+        ),
+        archive.patch_exact(
+            main,
+            b"URe=h.default.join(`${__dirname}/../macos_mic_apps_with_devices_process`,`index.js`)",
+            b"URe=h.default.join(process.resourcesPath,`linux-mic-apps.js`)",
+            expected=1,
+            label="Linux mic apps helper path",
+        ),
     ]
 
     if b"process.platform===`linux`" not in archive.read_file(main):

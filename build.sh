@@ -416,6 +416,8 @@ note "Native SQLite module rebuilt with node-gyp $NODE_GYP_VERSION and $CXX_BIN"
 install -m 0755 "$PROJECT_DIR/scripts/run-granola" "$APP_DIR/run-granola"
 install -D -m 0755 "$PROJECT_DIR/scripts/meet-consent-host" \
   "$APP_DIR/resources/native-host/meet-consent-host"
+install -m 0644 "$PROJECT_DIR/scripts/linux-mic-apps.js" \
+  "$APP_DIR/resources/linux-mic-apps.js"
 
 cat >"$APP_DIR/.granola-linux-macos-build" <<EOF
 granola_version=$GRANOLA_VERSION

@@ -55,6 +55,10 @@ def make_archive(
             b"let t=k.app.getAppPath();if(process.platform===`win32`)"
             b"return v.join(t,`native`,`windows`,e);"
             b"let n=process.arch===`arm64`?`arm64`:`x64`;return v.join(t,`native`,n,e)};"
+            b"var URe=h.default.join(`${__dirname}/../macos_mic_apps_with_devices_process`,`index.js`);"
+            b"function ZRe(e){return process.platform!==`darwin`||!bO?()=>{}:(zO=e,()=>{})}"
+            b"function yBe(){return process.platform===`darwin`?ZRe:"
+            b"process.platform===`win32`?hBe:e=>(e([]),()=>{})}"
             + (
                 b"handler={audio:{name:`All loopback devices`,id:`loopbackAllDevices`}}"
                 if include_loopback
@@ -116,6 +120,9 @@ class PatchAsarTests(unittest.TestCase):
                 b"return v.join(process.resourcesPath,`native-host`,e)", main
             )
             self.assertNotIn(b"k.app.getAppPath()", main)
+            self.assertIn(b"process.platform===`win32`?hBe:ZRe", main)
+            self.assertIn(b"function ZRe(e){return(", main)
+            self.assertIn(b"URe=h.default.join(process.resourcesPath,`linux-mic-apps.js`)", main)
             self.assertEqual(primary.count(b"video:!1"), 2)
             self.assertIn(
                 b"D=await T(`microphone`),E=(await new Promise",

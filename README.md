@@ -38,6 +38,7 @@ Tested on Pop!_OS 24.04 with COSMIC/Wayland using Granola 7.469.1 and Electron
 | Google login callback | Desktop protocol handler is installed by `desktop.sh`; test with your own account |
 | Microphone capture | PipeWire capture and live transcription verified with built-in and Bluetooth HFP microphones |
 | System/meeting audio | Uses Granola's built-in all-output-devices loopback path; sustained capture verified, real meeting audio still needs testing |
+| Meeting detection | Granola's macOS mic-app observer runs on PipeWire capture streams (`pw-dump`), so a meeting app using the microphone triggers "Meeting detected" |
 | Global shortcuts | Limited on Wayland; Granola's bundle does not ship the Linux X11 key server |
 | Granola Companion extension (Google Meet consent helper) | A Python relay replaces the Mach-O-only official host; `desktop.sh` registers it for Chromium-based browsers. Connection verified in Chrome |
 | Self-update | Unavailable; rebuild from a new official DMG instead |
