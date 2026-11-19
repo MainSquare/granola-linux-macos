@@ -71,6 +71,7 @@ EOF
     printf 'Installed desktop entry: %s\n' "$DESKTOP_FILE"
     NATIVE_HOST="$APP_DIR/resources/native-host/meet-consent-host"
     if [[ -x "$NATIVE_HOST" ]]; then
+      NATIVE_HOST_JSON="$(python3 -I -c 'import json, sys; print(json.dumps(sys.argv[1]))' "$NATIVE_HOST")"
       for browser_dir in "${BROWSER_CONFIG_DIRS[@]}"; do
         [[ -d "$CONFIG_DIR/$browser_dir" ]] || continue
         mkdir -p "$CONFIG_DIR/$browser_dir/NativeMessagingHosts"
@@ -79,7 +80,7 @@ EOF
 {
   "name": "com.granola.app",
   "description": "Granola meeting notes - consent messaging",
-  "path": "$NATIVE_HOST",
+  "path": $NATIVE_HOST_JSON,
   "type": "stdio",
   "allowed_origins": [
     "chrome-extension://fihphjchjdimokpleomddhnapnobdphn/",

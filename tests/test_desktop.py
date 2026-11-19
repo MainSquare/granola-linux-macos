@@ -86,6 +86,19 @@ class DesktopIntegrationTests(unittest.TestCase):
         self.assertEqual(removed.returncode, 0, removed.stderr)
         self.assertFalse(manifest.exists())
 
+    def test_escapes_companion_host_path_in_manifest(self) -> None:
+        escaped_dir = self.root / "Granola\\build"
+        self.app_dir.rename(escaped_dir)
+        installed = self.run_desktop("install", str(escaped_dir))
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        manifest = (
+            self.root / "config" / "google-chrome" / "NativeMessagingHosts" / "com.granola.app.json"
+        )
+        contents = json.loads(manifest.read_text(encoding="utf-8"))
+        self.assertEqual(
+            contents["path"], str(escaped_dir / "resources" / "native-host" / "meet-consent-host")
+        )
+
     def test_rejects_extra_install_arguments(self) -> None:
         result = self.run_desktop("install", str(self.app_dir), "unexpected")
         self.assertNotEqual(result.returncode, 0)
