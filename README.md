@@ -38,8 +38,9 @@ Tested on Pop!_OS 24.04 with COSMIC/Wayland using Granola 7.469.1 and Electron
 | Google login callback | Desktop protocol handler is installed by `desktop.sh`; test with your own account |
 | Microphone capture | PipeWire capture and live transcription verified with built-in and Bluetooth HFP microphones |
 | System/meeting audio | Uses Granola's built-in all-output-devices loopback path; sustained capture verified, real meeting audio still needs testing |
+| Meeting detection | Granola's macOS mic-app observer runs on PipeWire capture streams (`pw-dump`), so a meeting app using the microphone triggers "Meeting detected" |
 | Global shortcuts | Limited on Wayland; Granola's bundle does not ship the Linux X11 key server |
-| Google Meet consent helper | Unavailable; the official helper in the macOS installer is Mach-O-only |
+| Granola Companion extension (Google Meet consent helper) | A Python relay replaces the Mach-O-only official host; `desktop.sh` registers it for Chromium-based browsers. Connection verified in Chrome |
 | Self-update | Unavailable; rebuild from a new official DMG instead |
 
 Do a disposable test meeting before relying on this for an important call.
@@ -54,13 +55,14 @@ Granola's web app can view and edit notes, but
 - 7-Zip's `7zz` binary (or set `GRANOLA_7ZZ`) to extract the DMG.
 - Python 3, curl, jq, tar, xz, make, `file`, and GCC/G++ 11 or newer.
 - `pactl` for automatic Bluetooth headset microphone profile management.
+- `pw-dump` (package `pipewire-bin` on Debian and Ubuntu) for meeting detection.
 - Normal Electron runtime libraries for your distribution, including GTK, NSS,
   GBM, and ALSA.
 
 On Pop!_OS/Ubuntu, most build prerequisites can be installed with:
 
 ```bash
-sudo apt install 7zip build-essential curl file jq make npm pulseaudio-utils python3 xz-utils
+sudo apt install 7zip build-essential curl file jq make npm pipewire-bin pulseaudio-utils python3 xz-utils
 ```
 
 Check `node --version` separately: the distribution's default Node.js may be too
@@ -78,6 +80,14 @@ Or supply an official DMG you already downloaded:
 
 ```bash
 ./build.sh --install-desktop /path/to/Granola.dmg
+```
+
+Since 7.786.3, Granola's installer no longer ships the C++ sources of its patched SQLite addon.
+Also download the official [7.478.0 installer](https://dr2v7l5emb758.cloudfront.net/7.478.0/Granola-7.478.0-mac-universal.dmg), which still has them, and pass it with `--sqlite-sources-dmg`.
+The build only uses those sources when both installers carry the same addon version and JavaScript.
+
+```bash
+./build.sh --install-desktop --sqlite-sources-dmg /path/to/Granola-7.478.0-mac-universal.dmg /path/to/Granola.dmg
 ```
 
 The runnable app is created at `build/granola`. Start it from your application

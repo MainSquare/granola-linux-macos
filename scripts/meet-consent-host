@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""Relay the Granola Companion Chrome extension to the Granola app on Linux.
+
+Granola ships its Meet consent native messaging host for macOS and Windows only.
+Chrome talks to the host with length-prefixed JSON on stdin and stdout, and the
+app listens on a Unix socket for newline-delimited JSON, like the official host.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import socket
+import struct
+import sys
+import threading
+import time
+
+# Chrome rejects host messages above 1 MB and closes the host.
+MAX_MESSAGE_TO_CHROME = 1024 * 1024
+DISCONNECTED = json.dumps({"type": "granola:status", "connected": False}).encode()
+
+stdout_lock = threading.Lock()
+app_lock = threading.Lock()
+app_socket: socket.socket | None = None
+
+
+def socket_paths() -> list[str]:
+    # Matches the app: the first 12 hex digits of SHA-256 of the home directory.
+    home = os.path.expanduser("~")
+    digest = hashlib.sha256(home.encode("utf-8")).hexdigest()[:12]
+    return [f"/tmp/granola-meet-consent-{digest}.sock", "/tmp/granola-meet-consent.sock"]
+
+
+def send_to_chrome(message: bytes) -> None:
+    with stdout_lock:
+        sys.stdout.buffer.write(struct.pack("=I", len(message)) + message)
+        sys.stdout.buffer.flush()
+
+
+def read_from_chrome() -> bytes | None:
+    header = sys.stdin.buffer.read(4)
+    if len(header) < 4:
+        return None
+    (length,) = struct.unpack("=I", header)
+    body = sys.stdin.buffer.read(length)
+    return body if len(body) == length else None
+
+
+def relay_chrome_to_app() -> None:
+    while (body := read_from_chrome()) is not None:
+        try:
+            line = json.dumps(json.loads(body), separators=(",", ":"), ensure_ascii=False)
+        except ValueError:
+            continue
+        with app_lock:
+            target = app_socket
+        if target is None:
+            continue
+        try:
+            target.sendall(line.encode("utf-8") + b"\n")
+        except OSError:
+            pass
+    # Chrome closed the port.
+    os._exit(0)
+
+
+def peer_uid(connection: socket.socket) -> int:
+    credentials = connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("iII"))
+    return struct.unpack("iII", credentials)[1]
+
+
+def connect_to_app() -> socket.socket | None:
+    for path in socket_paths():
+        candidate = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            candidate.connect(path)
+            # Another local user can bind these /tmp paths before Granola does.
+            if peer_uid(candidate) == os.getuid():
+                return candidate
+        except OSError:
+            pass
+        candidate.close()
+    return None
+
+
+def relay_app_to_chrome(connection: socket.socket) -> None:
+    buffer = b""
+    while chunk := connection.recv(65536):
+        buffer += chunk
+        *lines, buffer = buffer.split(b"\n")
+        for line in lines:
+            if line.strip() and len(line) <= MAX_MESSAGE_TO_CHROME:
+                send_to_chrome(line)
+
+
+def main() -> None:
+    global app_socket
+    threading.Thread(target=relay_chrome_to_app, daemon=True).start()
+    delay = 1.0
+    while True:
+        connection = connect_to_app()
+        if connection is None:
+            time.sleep(delay)
+            delay = min(delay * 2, 10.0)
+            continue
+        delay = 1.0
+        with app_lock:
+            app_socket = connection
+        try:
+            relay_app_to_chrome(connection)
+        except OSError:
+            pass
+        with app_lock:
+            app_socket = None
+        connection.close()
+        send_to_chrome(DISCONNECTED)
+
+
+if __name__ == "__main__":
+    main()
